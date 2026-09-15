@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: replace every REPO_PATH with the absolute path of your clone, then
+     copy to ~/Library/LaunchAgents/ and `launchctl load` it. See HANDOVER.md §6. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sunnystep.seo-agent.daily-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>REPO_PATH/daily_sync.py</string>
+    </array>
+
+    <!-- Midnight SGT = 16:00 UTC -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>16</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>REPO_PATH/logs/daily_sync.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>REPO_PATH/logs/daily_sync_error.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
