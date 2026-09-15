@@ -7,7 +7,7 @@ from datetime import date
 from typing import List, Optional, Sequence
 
 from .config import load_config
-from .enums import RunType, Source
+from .enums import Source
 from .exceptions import ConfigurationError, TrackingError
 from .runner import COLLECTOR_ORDER, TrackingRunner
 from .transforms.normalize import as_of_date, parse_date
@@ -95,32 +95,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
         if args.command == "collect":
             as_of = parse_date(args.as_of_date) if args.as_of_date else as_of_date(tz_name=config.timezone)
-            _print(
-                {
-                    "source": args.source,
-                    "as_of_date": as_of.isoformat(),
-                    "dry_run": bool(args.dry_run),
-                    "status": "accepted",
-                    "note": "Collector execution is implemented in later phases; doctor/lock path is live.",
-                },
-                as_json,
-            )
-            return 0
+            if args.dry_run:
+                _print(
+                    {
+                        "source": args.source,
+                        "as_of_date": as_of.isoformat(),
+                        "dry_run": True,
+                        "status": "skipped",
+                        "note": "No API call and no source rows written.",
+                    },
+                    as_json,
+                )
+                return 0
+            payload = runner.collect_source(args.source, as_of, dry_run=False)
+            _print(payload, as_json)
+            return 0 if payload["status"] != "failed" else 2
         if args.command == "daily":
             as_of = parse_date(args.as_of_date) if args.as_of_date else as_of_date(tz_name=config.timezone)
             if args.dry_run:
-                _print({"as_of_date": as_of.isoformat(), "dry_run": True, "status": "skipped"}, as_json)
+                _print(
+                    {
+                        "as_of_date": as_of.isoformat(),
+                        "dry_run": True,
+                        "sources": COLLECTOR_ORDER,
+                        "status": "skipped",
+                    },
+                    as_json,
+                )
                 return 0
-            run = runner.start_run(
-                RunType.DAILY,
-                as_of,
-                COLLECTOR_ORDER,
-                simulate_failure=args.simulate_failure,
-            )
-            from .enums import RunStatus
-            runner.finish_run(run, RunStatus.PARTIAL, row_counts={})
-            _print({"run_id": run.run_id, "status": "partial", "as_of_date": as_of.isoformat()}, as_json)
-            return 0
+            payload = runner.run_daily(as_of)
+            _print(payload, as_json)
+            return 0 if payload["status"] != "failed" else 2
         if args.command == "backfill":
             sources = _parse_sources(args.sources)
             start = parse_date(args.start_date)
@@ -132,16 +137,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 raise ConfigurationError(
                     f"Backfill range {span} days exceeds configured maximum {config.backfill_days}"
                 )
-            _print(
-                {
-                    "sources": sources,
-                    "start_date": start.isoformat(),
-                    "end_date": end.isoformat(),
-                    "status": "accepted",
-                },
-                as_json,
-            )
-            return 0
+            payload = runner.run_backfill(sources, start, end)
+            _print(payload, as_json)
+            return 0 if payload["status"] != "failed" else 2
         if args.command == "check":
             row = runner.store.get_run(args.run_id)
             if row is None:

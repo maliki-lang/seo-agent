@@ -1,22 +1,31 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import uuid
 from datetime import date
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from .catalogs import require_catalogue_minimums, sync_catalogues
+from .checks.reconciliation import (
+    Ga4ReconciliationCheck,
+    GscReconciliationCheck,
+    stored_ga4_sessions,
+    stored_gsc_totals,
+)
+from .collectors.base import CollectorResult
+from .collectors.ga4 import Ga4Collector, ga4_latest_available_date
+from .collectors.gsc import GscCollector, gsc_latest_available_date
 from .config import TrackingConfig
 from .costs import CostLedger
-from .enums import CollectorStatus, RunStatus, RunType, Source
+from .enums import CheckStatus, CollectorStatus, RunStatus, RunType, Source
 from .exceptions import TrackingError
 from .logging import StructuredLogger
-from .models import RunLog, UpsertStats
+from .models import Ga4DailyRow, GscDailyRow, QualityCheckRow, RunLog, UpsertStats
 from .storage import TrackingStore
-from .transforms.normalize import parse_date, utc_now_iso
+from .transforms.metrics import date_chunks
+from .transforms.normalize import utc_now_iso
 
-
+IMPLEMENTED_COLLECTORS = {Source.GSC.value, Source.GA4.value}
 COLLECTOR_ORDER = [Source.GSC.value, Source.GA4.value, Source.SERPER.value, Source.AI_VISIBILITY.value]
 
 
@@ -41,16 +50,20 @@ class TrackingRunner:
         store: Optional[TrackingStore] = None,
         logger: Optional[StructuredLogger] = None,
         collectors: Optional[Dict[str, Callable]] = None,
+        gsc_collector: Optional[GscCollector] = None,
+        ga4_collector: Optional[Ga4Collector] = None,
     ):
         self.config = config
         self.store = store or TrackingStore(config)
         self.logger = logger or StructuredLogger(level=config.log_level)
         self.collectors = collectors or {}
         self.costs = CostLedger(config.daily_cost_cap_usd)
+        self.gsc_collector = gsc_collector
+        self.ga4_collector = ga4_collector
 
     def doctor(self) -> Dict[str, object]:
         applied = self.store.migrate()
-        report = {
+        return {
             "config": self.config.public_dict(),
             "migrations_applied": applied,
             "storage_path": str(self.store.path),
@@ -63,7 +76,6 @@ class TrackingRunner:
                 "lark": bool(self.config.lark_base_app_token),
             },
         }
-        return report
 
     def start_run(
         self,
@@ -141,3 +153,255 @@ class TrackingRunner:
             status=status.value,
             cost_usd=str(self.costs.spent),
         )
+
+    def _gsc(self) -> GscCollector:
+        return self.gsc_collector or GscCollector(self.config)
+
+    def _ga4(self) -> Ga4Collector:
+        return self.ga4_collector or Ga4Collector(self.config)
+
+    def persist_collector_result(self, source: str, result: CollectorResult) -> UpsertStats:
+        if source == Source.GSC.value:
+            return self.store.upsert_gsc(list(result.rows))
+        if source == Source.GA4.value:
+            return self.store.upsert_ga4(list(result.rows))
+        raise TrackingError(f"No persistence path for source {source}")
+
+    def _record_check(self, run_id: str, result) -> None:
+        self.store.insert_quality_checks(
+            [
+                QualityCheckRow(
+                    check_id=str(uuid.uuid4()),
+                    run_id=run_id,
+                    check_name=result.check_name,
+                    scope=result.scope,
+                    status=result.status,
+                    severity=result.severity,
+                    threshold=result.threshold,
+                    observed_value=result.observed_value,
+                    details_json=result.details,
+                )
+            ]
+        )
+
+    def _reconcile(self, run: RunLog, source: str, start: date, end: date, collector: Any) -> None:
+        try:
+            if source == Source.GSC.value:
+                detailed = stored_gsc_totals(self.store, start, end)
+                aggregate = collector.aggregate_totals(start, end)
+                check = GscReconciliationCheck().run(
+                    detailed_clicks=detailed[0],
+                    detailed_impressions=detailed[1],
+                    aggregate_clicks=aggregate[0],
+                    aggregate_impressions=aggregate[1],
+                )
+            else:
+                detailed_sessions = stored_ga4_sessions(self.store, start, end)
+                aggregate_sessions = collector.aggregate_sessions(start, end)
+                check = Ga4ReconciliationCheck().run(
+                    detailed_sessions=detailed_sessions,
+                    aggregate_sessions=aggregate_sessions,
+                )
+        except TrackingError as exc:
+            check = Ga4ReconciliationCheck().run(
+                detailed_sessions=0,
+                aggregate_sessions=None,
+            ) if source == Source.GA4.value else GscReconciliationCheck().run(
+                detailed_clicks=0,
+                detailed_impressions=0,
+                aggregate_clicks=None,
+                aggregate_impressions=None,
+            )
+            check.details["error_class"] = exc.error_code
+        self._record_check(run.run_id, check)
+
+    def run_one_source(
+        self,
+        run: RunLog,
+        source: str,
+        start: date,
+        end: date,
+        *,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        if source not in IMPLEMENTED_COLLECTORS:
+            self.store.set_collector_state(
+                run.run_id,
+                source,
+                CollectorStatus.SKIPPED,
+                error_message="Collector not implemented in this phase",
+                finished_at=utc_now_iso(),
+            )
+            return {"source": source, "status": "skipped", "reason": "not-implemented"}
+        collector = self._gsc() if source == Source.GSC.value else self._ga4()
+        started = utc_now_iso()
+        self.store.set_collector_state(
+            run.run_id, source, CollectorStatus.RUNNING, started_at=started
+        )
+        try:
+            result = collector.collect(
+                run_id=run.run_id,
+                as_of_date=run.as_of_date,
+                start_date=start,
+                end_date=end,
+            )
+            stats = UpsertStats(skipped=len(result.rows)) if dry_run else self.persist_collector_result(source, result)
+            result.stats = stats
+            if not dry_run:
+                self._reconcile(run, source, start, end, collector)
+            self.store.set_collector_state(
+                run.run_id,
+                source,
+                CollectorStatus.SUCCEEDED,
+                row_count=len(result.rows),
+                finished_at=utc_now_iso(),
+            )
+            if source not in run.completed_collectors and source not in run.failed_collectors:
+                run.completed_collectors.append(source)
+            run.row_counts[source] = run.row_counts.get(source, 0) + len(result.rows)
+            return {
+                "source": source,
+                "status": "succeeded",
+                "rows": len(result.rows),
+                "stats": stats.as_dict(),
+                "warnings": result.warnings,
+                "dry_run": dry_run,
+            }
+        except TrackingError as exc:
+            self.store.set_collector_state(
+                run.run_id,
+                source,
+                CollectorStatus.FAILED,
+                error_code=exc.error_code,
+                error_message=str(exc),
+                finished_at=utc_now_iso(),
+            )
+            run.completed_collectors = [item for item in run.completed_collectors if item != source]
+            run.failed_collectors[source] = exc.error_code
+            self.logger.error(
+                "collector_failed",
+                run_id=run.run_id,
+                source=source,
+                error_class=exc.error_code,
+                as_of_date=run.as_of_date.isoformat(),
+            )
+            return {
+                "source": source,
+                "status": "failed",
+                "error_class": exc.error_code,
+                "error": str(exc),
+            }
+
+    def run_sources(
+        self,
+        run: RunLog,
+        sources: Iterable[str],
+        start: date,
+        end: date,
+        *,
+        dry_run: bool = False,
+        chunk_days: int = 7,
+    ) -> List[Dict[str, Any]]:
+        summaries: List[Dict[str, Any]] = []
+        for source in sources:
+            source_summary = {"source": source, "chunks": []}
+            if source not in IMPLEMENTED_COLLECTORS:
+                summaries.append(self.run_one_source(run, source, start, end, dry_run=dry_run))
+                continue
+            for chunk_start, chunk_end in date_chunks(start, end, chunk_days):
+                chunk_result = self.run_one_source(
+                    run, source, chunk_start, chunk_end, dry_run=dry_run
+                )
+                source_summary["chunks"].append(
+                    {
+                        "start": chunk_start.isoformat(),
+                        "end": chunk_end.isoformat(),
+                        **chunk_result,
+                    }
+                )
+                if chunk_result.get("status") == "failed":
+                    break
+            summaries.append(source_summary)
+        return summaries
+
+    def finalize(self, run: RunLog) -> RunStatus:
+        failed = run.failed_collectors
+        completed = list(dict.fromkeys(
+            item for item in run.completed_collectors if item in IMPLEMENTED_COLLECTORS
+        ))
+        run.completed_collectors = completed
+        requested_implemented = [item for item in run.requested_collectors if item in IMPLEMENTED_COLLECTORS]
+        if failed and not completed:
+            status = RunStatus.FAILED
+        elif failed or len(completed) < len(requested_implemented):
+            status = RunStatus.PARTIAL
+        else:
+            status = RunStatus.SUCCEEDED
+        self.finish_run(run, status, row_counts=run.row_counts, failed=failed)
+        return status
+
+    def collect_source(
+        self,
+        source: str,
+        as_of: date,
+        *,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        run = self.start_run(RunType.MANUAL, as_of, [source])
+        start = as_of
+        if source == Source.GSC.value:
+            start = gsc_latest_available_date(as_of, self.config.freshness.gsc_days)
+        elif source == Source.GA4.value:
+            start = ga4_latest_available_date(as_of, self.config.freshness.ga4_days)
+        summary = self.run_one_source(run, source, start, start, dry_run=dry_run)
+        status = self.finalize(run)
+        return {
+            "run_id": run.run_id,
+            "status": status.value,
+            "as_of_date": as_of.isoformat(),
+            "data_date": start.isoformat(),
+            "result": summary,
+        }
+
+    def run_daily(self, as_of: date, *, dry_run: bool = False, sources: Optional[List[str]] = None) -> Dict[str, Any]:
+        requested = sources or list(COLLECTOR_ORDER)
+        run = self.start_run(RunType.DAILY, as_of, requested)
+        summaries = []
+        for source in requested:
+            if source == Source.GSC.value:
+                day = gsc_latest_available_date(as_of, self.config.freshness.gsc_days)
+            elif source == Source.GA4.value:
+                day = ga4_latest_available_date(as_of, self.config.freshness.ga4_days)
+            else:
+                day = as_of
+            summaries.append(self.run_one_source(run, source, day, day, dry_run=dry_run))
+        status = self.finalize(run)
+        return {
+            "run_id": run.run_id,
+            "status": status.value,
+            "as_of_date": as_of.isoformat(),
+            "collectors": summaries,
+            "row_counts": run.row_counts,
+            "failed_collectors": run.failed_collectors,
+        }
+
+    def run_backfill(
+        self,
+        sources: List[str],
+        start: date,
+        end: date,
+        *,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        run = self.start_run(RunType.BACKFILL, end, sources)
+        summaries = self.run_sources(run, sources, start, end, dry_run=dry_run, chunk_days=7)
+        status = self.finalize(run)
+        return {
+            "run_id": run.run_id,
+            "status": status.value,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "collectors": summaries,
+            "row_counts": run.row_counts,
+            "failed_collectors": run.failed_collectors,
+        }
