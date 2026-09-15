@@ -11,12 +11,29 @@ import subprocess
 import datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 REPO_ROOT = Path(__file__).parent
-BASE_TOKEN = "Ewbyb06HzamwGJs2Oqkl7bUggWg"
-MANIFEST_TABLE = "tbl4WOkvWqh2QXZy"
-REGISTRY_TABLE = "tbllUUb7MtE0vB60"
-REGISTRY_RECORD = "recvk3Bwf51Hzm"
-AGENT_FOLDER = "https://zlsbwg9eee.sg.larksuite.com/drive/folder/WCWCfOsg7lOeAPdgCpYlJ5i7gEh"
+load_dotenv(REPO_ROOT / "data_sources" / "config" / ".env")
+load_dotenv(REPO_ROOT / ".env")
+
+MANIFEST_TABLE = os.getenv("LARK_MANIFEST_TABLE_ID", "tbl4WOkvWqh2QXZy")
+REGISTRY_TABLE = os.getenv("LARK_REGISTRY_TABLE_ID", "tbllUUb7MtE0vB60")
+REGISTRY_RECORD = os.getenv("LARK_REGISTRY_RECORD_ID", "recvk3Bwf51Hzm")
+AGENT_FOLDER = os.getenv(
+    "LARK_AGENT_FOLDER_URL",
+    "https://zlsbwg9eee.sg.larksuite.com/drive/folder/WCWCfOsg7lOeAPdgCpYlJ5i7gEh",
+)
+
+
+def lark_base_token() -> str:
+    token = os.getenv("LARK_BASE_APP_TOKEN", "").strip()
+    if not token:
+        raise SystemExit(
+            "LARK_BASE_APP_TOKEN is required. Set it in data_sources/config/.env; "
+            "do not hardcode credentials."
+        )
+    return token
 
 
 def count_files(folder: str) -> int:
@@ -52,6 +69,7 @@ def main():
     now_sgt = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     sync_date = now_sgt.strftime("%Y-%m-%d")
     sync_title = f"SEO Agent daily sync — {sync_date}"
+    base_token = lark_base_token()
 
     drafts = count_files("drafts")
     published = count_files("published")
@@ -80,7 +98,7 @@ def main():
 
     result = run_lark_cli([
         "base", "+record-batch-create",
-        "--base-token", BASE_TOKEN,
+        "--base-token", base_token,
         "--table-id", MANIFEST_TABLE,
         "--json", json.dumps({
             "fields": list(manifest_row.keys()),
@@ -96,7 +114,7 @@ def main():
     # Update registry row Last Folder Update At
     update_result = run_lark_cli([
         "base", "+record-upsert",
-        "--base-token", BASE_TOKEN,
+        "--base-token", base_token,
         "--table-id", REGISTRY_TABLE,
         "--record-id", REGISTRY_RECORD,
         "--json", json.dumps({"Last Folder Update At": sync_date})
