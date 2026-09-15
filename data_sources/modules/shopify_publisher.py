@@ -75,7 +75,7 @@ class ShopifyPublisher:
             Path(__file__).parent.parent / "config" / ".env"
         )
 
-        self.base_url = f"https://{self.shop}/admin/api/{self.api_version}"
+        self.base_url = self.admin_api_base_url(self.shop, self.api_version)
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json; charset=utf-8",
@@ -86,6 +86,32 @@ class ShopifyPublisher:
         self.session.headers["X-Shopify-Access-Token"] = self.access_token
         self._blogs_cache: Optional[Dict[str, str]] = None
 
+    @staticmethod
+    def admin_api_base_url(shop: str, api_version: str) -> str:
+        """Return the Admin REST API root. Shop must be a hostname, not a URL."""
+        shop = (shop or "").strip()
+        api_version = (api_version or "").strip()
+        if not shop or not api_version:
+            raise ValueError("shop and api_version are required")
+        if "://" in shop or "{" in shop or "}" in shop:
+            raise ValueError("shop must be a hostname such as example.myshopify.com")
+        return f"https://{shop}/admin/api/{api_version}"
+
+    @staticmethod
+    def oauth_token_url(shop: str) -> str:
+        shop = (shop or "").strip()
+        if not shop or "://" in shop or "{" in shop or "}" in shop:
+            raise ValueError("shop must be a hostname such as example.myshopify.com")
+        return f"https://{shop}/admin/oauth/access_token"
+
+    @staticmethod
+    def article_admin_url(store_handle: str, article_id: str) -> str:
+        handle = (store_handle or "").replace(".myshopify.com", "").strip()
+        article_id = str(article_id or "").strip()
+        if not handle or not article_id:
+            raise ValueError("store_handle and article_id are required")
+        return f"https://{handle}.myshopify.com/admin/articles/{article_id}"
+
     # ── token management (mirrors inventory-and-sales-agent) ─────────
     def _fetch_token(self) -> str:
         if not (self.client_id and self.client_secret):
@@ -93,7 +119,7 @@ class ShopifyPublisher:
                 "No SHOPIFY_ACCESS_TOKEN and no SHOPIFY_CLIENT_ID/SECRET to refresh it."
             )
         resp = requests.post(
-            f"https://{self.shop}/admin/oauth/access_token",
+            self.oauth_token_url(self.shop),
             json={"client_id": self.client_id, "client_secret": self.client_secret,
                   "grant_type": "client_credentials"},
             timeout=15,
@@ -313,9 +339,7 @@ class ShopifyPublisher:
             meta_description=draft["meta_description"],
         )
         article_id = str(article.get("id", ""))
-        edit_url = (
-            f"https://{self.store_handle}.myshopify.com/admin/articles/{article_id}"
-        )
+        edit_url = self.article_admin_url(self.store_handle, article_id)
 
         # Record to publish ledger (best-effort).
         try:
