@@ -94,6 +94,12 @@ data_sources/config/*_config.json
 data_sources/cache/*
 !data_sources/cache/.gitkeep
 
+# Tracking local database
+data/tracking.db
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
 # Python virtual environment
 venv/
 env/

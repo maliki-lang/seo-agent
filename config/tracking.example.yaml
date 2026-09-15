@@ -1,0 +1,31 @@
+tracking:
+  env: development
+  timezone: Asia/Singapore
+  storage_url: sqlite:///data/tracking.db
+  daily_cost_cap_usd: 25
+  run_timeout_seconds: 3600
+  log_level: INFO
+  retry:
+    max_attempts: 3
+    base_delay_seconds: 2
+    max_delay_seconds: 60
+    jitter: true
+  freshness:
+    gsc_days: 3
+    ga4_days: 2
+    serper_hours: 30
+    ai_visibility_hours: 30
+  baseline_days: 28
+  backfill_days: 90
+  keyword_catalog_path: config/tracked_keywords.csv
+  ai_question_catalog_path: config/ai_questions.csv
+  brand_terms_path: config/brand_terms.txt
+  ai_referrers_path: config/ai_referrers.yaml
+  serper_gl: sg
+  serper_hl: en
+  serper_location: Singapore
+  serper_results_limit: 100
+  gsc_property: sc-domain:sunnystep.com
+  gsc_country: sgp
+  openai_visibility_model: gpt-4.1-mini
+  perplexity_visibility_model: sonar

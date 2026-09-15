@@ -1,0 +1,24 @@
+ai_referrers:
+  - chatgpt.com
+  - chat.openai.com
+  - openai.com
+  - perplexity.ai
+  - www.perplexity.ai
+  - gemini.google.com
+  - bard.google.com
+  - copilot.microsoft.com
+  - bing.com/chat
+  - you.com
+  - claude.ai
+  - anthropic.com
+
+organic_search:
+  mediums:
+    - organic
+  sources:
+    - google
+    - bing
+    - yahoo
+    - duckduckgo
+    - baidu
+    - yandex
