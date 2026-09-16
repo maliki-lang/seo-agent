@@ -1,0 +1,201 @@
+query_id,query,label
+b001,sunnystep,brand
+b002,sunnystep shoes,brand
+b003,sunnystep flats,brand
+b004,sunnystep loafers,brand
+b005,sunnystep walking shoes,brand
+b006,sunnystep review,brand
+b007,sunnystep singapore,brand
+b008,sunnystep store,brand
+b009,sunnystep official,brand
+b010,sunnystep arch support,brand
+b011,sunnystep wide feet,brand
+b012,sunnystep office shoes,brand
+b013,sunnystep nurses,brand
+b014,sunnystep teachers,brand
+b015,sunnystep commute,brand
+b016,sunnystep discount,brand
+b017,sunny step,brand
+b018,sunny step shoes,brand
+b019,sunny step flats,brand
+b020,sunny step loafers,brand
+b021,sunny step walking shoes,brand
+b022,sunny step review,brand
+b023,sunny step singapore,brand
+b024,sunny step store,brand
+b025,sunny step official,brand
+b026,sunny step arch support,brand
+b027,sunny step wide feet,brand
+b028,sunny step office shoes,brand
+b029,sunny step nurses,brand
+b030,sunny step teachers,brand
+b031,sunny step commute,brand
+b032,sunny step discount,brand
+b033,sunny-step,brand
+b034,sunny-step shoes,brand
+b035,sunny-step flats,brand
+b036,sunny-step loafers,brand
+b037,sunny-step walking shoes,brand
+b038,sunny-step review,brand
+b039,sunny-step singapore,brand
+b040,sunny-step store,brand
+b041,sunny-step official,brand
+b042,sunny-step arch support,brand
+b043,sunny-step wide feet,brand
+b044,sunny-step office shoes,brand
+b045,sunny-step nurses,brand
+b046,sunny-step teachers,brand
+b047,sunny-step commute,brand
+b048,sunny-step discount,brand
+b049,sunnysteps,brand
+b050,sunnysteps shoes,brand
+b051,sunnysteps flats,brand
+b052,sunnysteps loafers,brand
+b053,sunnysteps walking shoes,brand
+b054,sunnysteps review,brand
+b055,sunnysteps singapore,brand
+b056,sunnysteps store,brand
+b057,sunnysteps official,brand
+b058,sunnysteps arch support,brand
+b059,sunnysteps wide feet,brand
+b060,sunnysteps office shoes,brand
+b061,sunnysteps nurses,brand
+b062,sunnysteps teachers,brand
+b063,sunnysteps commute,brand
+b064,sunnysteps discount,brand
+b065,sunny steps,brand
+b066,sunny steps shoes,brand
+b067,sunny steps flats,brand
+b068,sunny steps loafers,brand
+b069,sunny steps walking shoes,brand
+b070,sunny steps review,brand
+b071,sunny steps singapore,brand
+b072,sunny steps store,brand
+b073,sunny steps official,brand
+b074,sunny steps arch support,brand
+b075,sunny steps wide feet,brand
+b076,sunny steps office shoes,brand
+b077,sunny steps nurses,brand
+b078,sunny steps teachers,brand
+b079,sunny steps commute,brand
+b080,sunny steps discount,brand
+b081,gosunnystep,brand
+b082,gosunnystep shoes,brand
+b083,gosunnystep flats,brand
+b084,gosunnystep loafers,brand
+b085,gosunnystep walking shoes,brand
+b086,gosunnystep review,brand
+b087,gosunnystep singapore,brand
+b088,gosunnystep store,brand
+b089,gosunnystep official,brand
+b090,gosunnystep arch support,brand
+b091,gosunnystep wide feet,brand
+b092,gosunnystep office shoes,brand
+b093,gosunnystep nurses,brand
+b094,gosunnystep teachers,brand
+b095,gosunnystep commute,brand
+b096,gosunnystep discount,brand
+b097,go sunnystep,brand
+b098,go sunnystep shoes,brand
+b099,go sunnystep flats,brand
+b100,go sunnystep loafers,brand
+n001,comfortable shoes singapore,non_brand
+n002,best comfortable shoes singapore,non_brand
+n003,walking shoes singapore,non_brand
+n004,best walking shoes singapore,non_brand
+n005,office shoes that dont hurt,non_brand
+n006,best office shoes that dont hurt,non_brand
+n007,shoes for standing all day,non_brand
+n008,best shoes for standing all day,non_brand
+n009,wide toe box shoes,non_brand
+n010,best wide toe box shoes,non_brand
+n011,arch support shoes singapore,non_brand
+n012,best arch support shoes singapore,non_brand
+n013,ballet flats singapore,non_brand
+n014,best ballet flats singapore,non_brand
+n015,comfortable loafers women,non_brand
+n016,best comfortable loafers women,non_brand
+n017,nurses shoes singapore,non_brand
+n018,best nurses shoes singapore,non_brand
+n019,teachers shoes singapore,non_brand
+n020,best teachers shoes singapore,non_brand
+n021,travel walking shoes,non_brand
+n022,best travel walking shoes,non_brand
+n023,MRT commute shoes,non_brand
+n024,best MRT commute shoes,non_brand
+n025,sunny weather shoes singapore,non_brand
+n026,best sunny weather shoes singapore,non_brand
+n027,sunny day walk shoes,non_brand
+n028,best sunny day walk shoes,non_brand
+n029,step up your shoes,non_brand
+n030,best step up your shoes,non_brand
+n031,sunny side bakery,non_brand
+n032,best sunny side bakery,non_brand
+n033,step sunny sandals,non_brand
+n034,best step sunny sandals,non_brand
+n035,anothersole shoes,non_brand
+n036,best anothersole shoes,non_brand
+n037,lucca vudor flats,non_brand
+n038,best lucca vudor flats,non_brand
+n039,dmk shoes singapore,non_brand
+n040,best dmk shoes singapore,non_brand
+n041,pretty fit singapore,non_brand
+n042,best pretty fit singapore,non_brand
+n043,comfort co shoes,non_brand
+n044,best comfort co shoes,non_brand
+n045,skechers singapore,non_brand
+n046,best skechers singapore,non_brand
+n047,the shoe co singapore,non_brand
+n048,best the shoe co singapore,non_brand
+n049,nike walking shoes,non_brand
+n050,best nike walking shoes,non_brand
+n051,adidas sneakers singapore,non_brand
+n052,best adidas sneakers singapore,non_brand
+n053,clarks comfort shoes,non_brand
+n054,best clarks comfort shoes,non_brand
+n055,vionic flats,non_brand
+n056,best vionic flats,non_brand
+n057,birkenstock singapore,non_brand
+n058,best birkenstock singapore,non_brand
+n059,hoka walking shoes,non_brand
+n060,best hoka walking shoes,non_brand
+n061,best flats for work,non_brand
+n062,best best flats for work,non_brand
+n063,shoes for aching feet,non_brand
+n064,best shoes for aching feet,non_brand
+n065,plantar fasciitis shoes singapore,non_brand
+n066,best plantar fasciitis shoes singapore,non_brand
+n067,orthotic friendly flats,non_brand
+n068,best orthotic friendly flats,non_brand
+n069,cushioned loafers,non_brand
+n070,best cushioned loafers,non_brand
+n071,memory foam flats singapore,non_brand
+n072,best memory foam flats singapore,non_brand
+n073,lightweight walking shoes,non_brand
+n074,best lightweight walking shoes,non_brand
+n075,breathable shoes humidity,non_brand
+n076,best breathable shoes humidity,non_brand
+n077,desk to dinner shoes,non_brand
+n078,best desk to dinner shoes,non_brand
+n079,comfortable sandals singapore,non_brand
+n080,best comfortable sandals singapore,non_brand
+n081,wide feet flats,non_brand
+n082,best wide feet flats,non_brand
+n083,bunion friendly shoes,non_brand
+n084,best bunion friendly shoes,non_brand
+n085,shoes for swollen feet,non_brand
+n086,best shoes for swollen feet,non_brand
+n087,all day comfort pumps,non_brand
+n088,best all day comfort pumps,non_brand
+n089,soft sole loafers,non_brand
+n090,best soft sole loafers,non_brand
+n091,ergonomic office shoes,non_brand
+n092,best ergonomic office shoes,non_brand
+n093,anti fatigue shoes,non_brand
+n094,best anti fatigue shoes,non_brand
+n095,supportive sneakers women,non_brand
+n096,best supportive sneakers women,non_brand
+n097,rainy day walking shoes,non_brand
+n098,best rainy day walking shoes,non_brand
+n099,indoor outdoor flats,non_brand
+n100,best indoor outdoor flats,non_brand

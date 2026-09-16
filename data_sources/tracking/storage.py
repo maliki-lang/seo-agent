@@ -521,6 +521,103 @@ class TrackingStore:
                 ),
             )
 
+    def insert_baseline_rows(self, rows: Sequence[Dict[str, Any]]) -> None:
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO baseline(
+                    baseline_id, baseline_name, period_start, period_end, locked_at,
+                    locked_by, status, metric_name, segment_json, metric_value,
+                    numerator, denominator, source_query_version, input_fingerprint,
+                    notes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        row["baseline_id"],
+                        row["baseline_name"],
+                        row["period_start"],
+                        row["period_end"],
+                        row.get("locked_at"),
+                        row.get("locked_by"),
+                        row["status"],
+                        row["metric_name"],
+                        row["segment_json"],
+                        row.get("metric_value"),
+                        row.get("numerator"),
+                        row.get("denominator"),
+                        row["source_query_version"],
+                        row["input_fingerprint"],
+                        row.get("notes") or "",
+                        row["created_at"],
+                    )
+                    for row in rows
+                ],
+            )
+
+    def lock_baseline(self, baseline_id: str, *, locked_at: str, locked_by: str) -> None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT status FROM baseline WHERE baseline_id = ? LIMIT 1",
+                (baseline_id,),
+            ).fetchone()
+            if row is None:
+                raise SchemaMismatchError(f"Unknown baseline_id {baseline_id}")
+            if row["status"] == "locked":
+                return
+            conn.execute(
+                """
+                UPDATE baseline
+                SET status = 'locked', locked_at = ?, locked_by = ?
+                WHERE baseline_id = ? AND status != 'locked'
+                """,
+                (locked_at, locked_by, baseline_id),
+            )
+
+    def insert_opportunities(self, rows: Sequence[Dict[str, Any]]) -> None:
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO opportunities(
+                    opportunity_id, report_id, category, problem,
+                    supporting_evidence_json, source_row_references_json,
+                    target_query_or_question, target_page, proposed_action, owner,
+                    impact_score, impact_estimate, confidence_label, confidence_value,
+                    effort_label, effort_value, priority_score, metric_to_watch,
+                    status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        row["opportunity_id"],
+                        row["report_id"],
+                        row["category"],
+                        row["problem"],
+                        row["supporting_evidence_json"]
+                        if isinstance(row["supporting_evidence_json"], str)
+                        else json.dumps(row["supporting_evidence_json"]),
+                        row["source_row_references_json"]
+                        if isinstance(row["source_row_references_json"], str)
+                        else json.dumps(row["source_row_references_json"]),
+                        row["target_query_or_question"],
+                        row["target_page"],
+                        row["proposed_action"],
+                        row["owner"],
+                        float(row["impact_score"]),
+                        row["impact_estimate"],
+                        row["confidence_label"],
+                        float(row["confidence_value"]),
+                        row["effort_label"],
+                        float(row["effort_value"]),
+                        float(row["priority_score"]),
+                        row["metric_to_watch"],
+                        row["status"],
+                        row["created_at"],
+                    )
+                    for row in rows
+                ],
+            )
+
     def count(self, table: str) -> int:
         if table not in {
             "gsc_daily",

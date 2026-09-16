@@ -74,7 +74,16 @@ def build_parser() -> argparse.ArgumentParser:
     baseline = sub.add_parser("baseline", parents=[shared], help="Create or lock a 28-day baseline")
     baseline.add_argument("--end-date")
     baseline.add_argument("--lock", action="store_true")
+    baseline.add_argument("--run-id", help="Optional run_id whose quality gate must pass before lock")
     baseline.set_defaults(handler="baseline")
+
+    opportunities = sub.add_parser(
+        "opportunities", parents=[shared], help="Score evidence-backed SEO/GEO opportunities"
+    )
+    opportunities.add_argument("--end-date")
+    opportunities.add_argument("--report-id")
+    opportunities.add_argument("--limit", type=int, default=10)
+    opportunities.set_defaults(handler="opportunities")
 
     weekly = sub.add_parser("weekly", parents=[shared], help="Generate weekly report")
     weekly.add_argument("--period-end")
@@ -145,10 +154,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             row = runner.store.get_run(args.run_id)
             if row is None:
                 raise ConfigurationError(f"Unknown run_id {args.run_id}")
-            _print({"run_id": args.run_id, "status": row["status"]}, as_json)
-            return 0
+            payload = runner.run_quality_checks(args.run_id)
+            _print(payload, as_json)
+            return 0 if payload.get("gate_status") != "failed" else 2
         if args.command == "baseline":
-            _print({"command": "baseline", "lock": bool(args.lock), "status": "not-yet-implemented"}, as_json)
+            end = parse_date(args.end_date) if args.end_date else None
+            payload = runner.create_baseline(
+                end_date=end,
+                lock=bool(args.lock),
+                run_id=args.run_id,
+            )
+            _print(payload, as_json)
+            return 0
+        if args.command == "opportunities":
+            end = parse_date(args.end_date) if args.end_date else None
+            payload = runner.build_opportunities(
+                report_id=args.report_id,
+                end_date=end,
+                limit=args.limit,
+            )
+            _print(payload, as_json)
             return 0
         if args.command == "weekly":
             _print(

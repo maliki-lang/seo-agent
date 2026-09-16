@@ -13,6 +13,7 @@ from .checks.reconciliation import (
     stored_ga4_sessions,
     stored_gsc_totals,
 )
+from .checks.suite import QualityCheckSuite
 from .collectors.ai_visibility import AiVisibilityCollector
 from .collectors.base import CollectorResult
 from .collectors.ga4 import Ga4Collector, ga4_latest_available_date
@@ -24,6 +25,8 @@ from .enums import CollectorStatus, RunStatus, RunType, Source
 from .exceptions import TrackingError
 from .logging import StructuredLogger
 from .models import QualityCheckRow, RunLog, UpsertStats
+from .reports.baseline import BaselineService
+from .reports.opportunities import OpportunityBuilder
 from .storage import TrackingStore
 from .transforms.metrics import date_chunks
 from .transforms.normalize import sha256_hex, utc_now_iso
@@ -456,4 +459,53 @@ class TrackingRunner:
             "collectors": summaries,
             "row_counts": run.row_counts,
             "failed_collectors": run.failed_collectors,
+        }
+
+    def run_quality_checks(self, run_id: str) -> Dict[str, Any]:
+        summary = QualityCheckSuite(self.config, self.store).run_for_run(run_id)
+        return {"run_id": run_id, **summary}
+
+    def create_baseline(
+        self,
+        *,
+        end_date: Optional[date] = None,
+        lock: bool = False,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return BaselineService(self.config, self.store).create(
+            end_date=end_date,
+            lock=lock,
+            run_id=run_id,
+        )
+
+    def build_opportunities(
+        self,
+        *,
+        report_id: Optional[str] = None,
+        end_date: Optional[date] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        report = report_id or f"ops-{utc_now_iso()}"
+        rows = OpportunityBuilder(self.config, self.store).build(
+            report_id=report,
+            end_date=end_date,
+            limit=limit,
+        )
+        return {
+            "report_id": report,
+            "opportunity_count": len(rows),
+            "opportunities": [
+                {
+                    "opportunity_id": row["opportunity_id"],
+                    "category": row["category"],
+                    "target_query_or_question": row["target_query_or_question"],
+                    "target_page": row["target_page"],
+                    "priority_score": row["priority_score"],
+                    "impact_score": row["impact_score"],
+                    "confidence_label": row["confidence_label"],
+                    "effort_label": row["effort_label"],
+                    "proposed_action": row["proposed_action"],
+                }
+                for row in rows
+            ],
         }
