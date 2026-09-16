@@ -169,14 +169,20 @@ def compute_period_metrics(
 
     ai_rows = store.fetchall(
         """
-        SELECT question_id, engine, mentioned_sunnystep, cited_urls, repetition_number
+        SELECT question_id, engine, mentioned_sunnystep, cited_urls, repetition_number, search_enabled
         FROM ai_answer_runs
         WHERE as_of_date >= ? AND as_of_date <= ?
         """,
         (start_s, end_s),
     )
+    chatgpt_search_blocked = any(
+        row["engine"] == Engine.CHATGPT.value and not int(row["search_enabled"] or 0)
+        for row in ai_rows
+    )
     parsed = []
     for row in ai_rows:
+        if row["engine"] == Engine.CHATGPT.value and chatgpt_search_blocked:
+            continue
         parsed.append(
             type(
                 "R",
@@ -191,26 +197,78 @@ def compute_period_metrics(
             )()
         )
     rates = stable_rates(parsed)
-    metrics.append(_metric("geo_combined_mention_rate", rates["mention_rate"], segment={"engine": "combined"}))
-    metrics.append(_metric("geo_combined_citation_rate", rates["citation_rate"], segment={"engine": "combined"}))
-    for engine in (Engine.CHATGPT.value, Engine.PERPLEXITY.value):
-        engine_rates = (rates.get("engines") or {}).get(engine) or {}
+    if chatgpt_search_blocked:
+        metrics.append(
+            _metric(
+                "geo_combined_mention_rate",
+                None,
+                segment={"engine": "combined"},
+                notes="blocked: ChatGPT search capability unsupported/unverified in window",
+            )
+        )
+        metrics.append(
+            _metric(
+                "geo_combined_citation_rate",
+                None,
+                segment={"engine": "combined"},
+                notes="blocked: ChatGPT search capability unsupported/unverified in window",
+            )
+        )
         metrics.append(
             _metric(
                 "geo_mention_rate",
-                engine_rates.get("mention_rate"),
-                segment={"engine": engine},
+                None,
+                segment={"engine": Engine.CHATGPT.value},
+                notes="blocked: search_enabled required for published GEO metrics",
+            )
+        )
+        metrics.append(
+            _metric(
+                "geo_citation_rate",
+                None,
+                segment={"engine": Engine.CHATGPT.value},
+                notes="blocked: search_enabled required for published GEO metrics",
+            )
+        )
+        # Perplexity may still publish if present in parsed rates.
+        p_rates = (rates.get("engines") or {}).get(Engine.PERPLEXITY.value) or {}
+        metrics.append(
+            _metric(
+                "geo_mention_rate",
+                p_rates.get("mention_rate"),
+                segment={"engine": Engine.PERPLEXITY.value},
                 notes="stable majority (>=2/3) of complete repetition sets",
             )
         )
         metrics.append(
             _metric(
                 "geo_citation_rate",
-                engine_rates.get("citation_rate"),
-                segment={"engine": engine},
+                p_rates.get("citation_rate"),
+                segment={"engine": Engine.PERPLEXITY.value},
                 notes="stable majority (>=2/3) of complete repetition sets",
             )
         )
+    else:
+        metrics.append(_metric("geo_combined_mention_rate", rates["mention_rate"], segment={"engine": "combined"}))
+        metrics.append(_metric("geo_combined_citation_rate", rates["citation_rate"], segment={"engine": "combined"}))
+        for engine in (Engine.CHATGPT.value, Engine.PERPLEXITY.value):
+            engine_rates = (rates.get("engines") or {}).get(engine) or {}
+            metrics.append(
+                _metric(
+                    "geo_mention_rate",
+                    engine_rates.get("mention_rate"),
+                    segment={"engine": engine},
+                    notes="stable majority (>=2/3) of complete repetition sets",
+                )
+            )
+            metrics.append(
+                _metric(
+                    "geo_citation_rate",
+                    engine_rates.get("citation_rate"),
+                    segment={"engine": engine},
+                    notes="stable majority (>=2/3) of complete repetition sets",
+                )
+            )
 
     fingerprint_payload = {
         "period_start": start_s,

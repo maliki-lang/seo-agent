@@ -79,7 +79,6 @@ class AiVisibilityCollector(Collector):
             "messages": [{"role": "user", "content": question}],
             "temperature": 0.2,
         }
-        search_enabled = False
         started = time.monotonic()
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
@@ -87,33 +86,54 @@ class AiVisibilityCollector(Collector):
             json={**body, "tools": [{"type": "web_search"}]},
             timeout=60,
         )
-        if response.status_code == 400:
-            response = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json=body,
-                timeout=60,
-            )
-            search_enabled = False
-        else:
-            search_enabled = response.ok
         latency_ms = int((time.monotonic() - started) * 1000)
+        if response.status_code == 400:
+            # Do not silently fall back to a non-search answer and mark it successful.
+            return {
+                "text": "",
+                "citations": [],
+                "latency_ms": latency_ms,
+                "cost_usd": Decimal("0"),
+                "model": model,
+                "search_enabled": False,
+                "search_capability": "unsupported",
+                "raw": {
+                    "status_code": 400,
+                    "error": "web_search tool rejected",
+                    "body_excerpt": (response.text or "")[:300],
+                },
+            }
         if not response.ok:
             raise _map_status(response.status_code, "OpenAI")
         data = response.json()
         text = ""
+        citations: List[str] = []
         try:
-            text = data["choices"][0]["message"]["content"] or ""
+            message = data["choices"][0]["message"]
+            text = message.get("content") or ""
+            for item in message.get("annotations") or []:
+                if isinstance(item, dict):
+                    url = item.get("url") or (item.get("url_citation") or {}).get("url")
+                    if url:
+                        citations.append(str(url))
         except (KeyError, IndexError, TypeError):
             text = ""
+        if not citations:
+            # Search requested but citations absent => unverified search capability.
+            search_capability = "unverified"
+            search_enabled = False
+        else:
+            search_capability = "verified"
+            search_enabled = True
         return {
             "text": text,
-            "citations": [],
+            "citations": citations,
             "latency_ms": latency_ms,
             "cost_usd": DEFAULT_COMPLETION_COST,
             "model": data.get("model") or model,
             "search_enabled": search_enabled,
-            "raw": {"id": data.get("id"), "model": data.get("model")},
+            "search_capability": search_capability,
+            "raw": {"id": data.get("id"), "model": data.get("model"), "search_capability": search_capability},
         }
 
     def _complete_perplexity(self, question: str) -> Dict[str, Any]:
@@ -173,19 +193,30 @@ class AiVisibilityCollector(Collector):
         raw_payloads: List[Dict[str, Any]] = []
         cost = Decimal("0")
         collected_at = utc_now_iso()
+        capability = "verified"
+        warnings = [
+            "Incomplete question/engine sets are excluded from published mention/citation rates until all three repetitions exist."
+        ]
         for record in questions:
             for engine in self.engines:
                 for repetition in range(1, self.repetitions + 1):
-                    if self.cost_ledger is not None:
-                        self.cost_ledger.add(DEFAULT_COMPLETION_COST, source=self.source)
                     payload = self._complete(engine.value, record.question, repetition)
+                    search_cap = str(payload.get("search_capability") or "")
+                    if engine == Engine.CHATGPT and search_cap in {"unsupported", "unverified"}:
+                        capability = search_cap
+                        warnings.append(
+                            "ChatGPT search capability is "
+                            f"{search_cap}; GEO mention/citation rates must not be published as verified."
+                        )
+                    api_cost = Decimal(str(payload.get("cost_usd") or DEFAULT_COMPLETION_COST))
+                    if self.cost_ledger is not None and api_cost > 0:
+                        self.cost_ledger.add(api_cost, source=self.source)
                     text = str(payload.get("text") or "")
                     parsed = parse_answer(
                         text,
                         extra_urls=payload.get("citations") or [],
                         competitor_catalogue=self.competitors,
                     )
-                    api_cost = Decimal(str(payload.get("cost_usd") or DEFAULT_COMPLETION_COST))
                     cost += api_cost
                     raw_id = str(uuid.uuid4())
                     raw_payloads.append(
@@ -222,8 +253,7 @@ class AiVisibilityCollector(Collector):
             source=self.source,
             rows=rows,
             cost_usd=cost,
+            capability=capability,
             raw_payloads=raw_payloads,
-            warnings=[
-                "Incomplete question/engine sets are excluded from published mention/citation rates until all three repetitions exist."
-            ],
+            warnings=sorted(set(warnings)),
         )
