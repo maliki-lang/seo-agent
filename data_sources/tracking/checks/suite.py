@@ -58,24 +58,25 @@ class QualityCheckSuite:
         if run is None:
             raise ValueError(f"Unknown run_id {run_id}")
         results: List[CheckResult] = []
-        results.extend(self._row_presence_checks())
-        results.append(self._natural_key_uniqueness())
+        results.extend(self._row_presence_checks(run_id=run_id))
+        results.append(self._natural_key_uniqueness(run_id=run_id))
         results.append(self._collector_completion(run))
         results.append(self._keyword_catalogue_size())
         results.append(self._ai_question_catalogue_size())
-        results.append(self._ai_repetition_completeness())
+        results.append(self._ai_repetition_completeness(run_id=run_id))
         results.append(BrandClassifierQualityCheck().run(config=self.config))
-        results.append(self._freshness(run))
-        results.append(self._non_negative_metrics())
-        results.append(self._ctr_range())
-        results.append(self._position_validity())
+        results.append(self._freshness(run, run_id=run_id))
+        results.append(self._non_negative_metrics(run_id=run_id))
+        results.append(self._ctr_range(run_id=run_id))
+        results.append(self._position_validity(run_id=run_id))
         results.append(self._api_cost_cap(run))
         results.append(self._run_duration(run))
         results.append(self._backfill_preservation())
-        results.append(self._raw_ai_answer_presence())
+        results.append(self._raw_ai_answer_presence(run_id=run_id))
         results.extend(self._reconciliation_checks(run))
-        results.append(self._url_validity())
+        results.append(self._url_validity(run_id=run_id))
         results.append(self._lark_publish_parity())
+        results.append(self._chatgpt_search_capability(run_id=run_id))
 
         self.store.insert_quality_checks(
             [
@@ -95,12 +96,17 @@ class QualityCheckSuite:
         )
         return summarize_check_results(results)
 
-    def _row_presence_checks(self) -> List[CheckResult]:
+    def _row_presence_checks(self, *, run_id: str) -> List[CheckResult]:
         out: List[CheckResult] = []
         for source, table in SOURCE_TABLES.items():
-            count = self.store.count(table)
+            count = int(
+                self.store.fetchall(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE run_id = ?",
+                    (run_id,),
+                )[0]["n"]
+            )
             if count == 0:
-                for name, field in (
+                for name, _field in (
                     ("source_present", "source"),
                     ("timestamp_present", "collected_at"),
                     ("as_of_date_present", "as_of_date"),
@@ -113,7 +119,7 @@ class QualityCheckSuite:
                             severity=Severity.ERROR,
                             threshold="100%",
                             observed_value="no_rows",
-                            details={"reason": f"no rows in {table}"},
+                            details={"reason": f"no rows in {table} for run", "run_id": run_id},
                         )
                     )
                 continue
@@ -123,7 +129,8 @@ class QualityCheckSuite:
                 ("as_of_date_present", "as_of_date"),
             ):
                 bad = self.store.fetchall(
-                    f"SELECT COUNT(*) AS n FROM {table} WHERE {column} IS NULL OR TRIM({column}) = ''"
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE run_id = ? AND ({column} IS NULL OR TRIM({column}) = '')",
+                    (run_id,),
                 )[0]["n"]
                 out.append(
                     CheckResult(
@@ -133,35 +140,44 @@ class QualityCheckSuite:
                         severity=Severity.ERROR,
                         threshold="100%",
                         observed_value=f"missing={bad};total={count}",
-                        details={"table": table, "column": column, "missing": int(bad)},
+                        details={"table": table, "column": column, "missing": int(bad), "run_id": run_id},
                     )
                 )
         return out
 
-    def _natural_key_uniqueness(self) -> CheckResult:
+    def _natural_key_uniqueness(self, *, run_id: str) -> CheckResult:
         dups = 0
         details = {}
         for table in SOURCE_TABLES.values():
-            if self.store.count(table) == 0:
+            count = int(
+                self.store.fetchall(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE run_id = ?",
+                    (run_id,),
+                )[0]["n"]
+            )
+            if count == 0:
                 continue
             row = self.store.fetchall(
                 f"""
                 SELECT COUNT(*) AS n FROM (
-                    SELECT natural_key FROM {table} GROUP BY natural_key HAVING COUNT(*) > 1
+                    SELECT natural_key FROM {table}
+                    WHERE run_id = ?
+                    GROUP BY natural_key HAVING COUNT(*) > 1
                 )
-                """
+                """,
+                (run_id,),
             )[0]
-            count = int(row["n"])
-            details[table] = count
-            dups += count
+            n = int(row["n"])
+            details[table] = n
+            dups += n
         return CheckResult(
             check_name="natural_key_uniqueness",
             scope="storage",
             status=_pass_fail(dups == 0),
             severity=Severity.CRITICAL,
-            threshold="0 duplicates",
+            threshold="0 duplicates in run",
             observed_value=str(dups),
-            details=details,
+            details={**details, "run_id": run_id},
         )
 
     def _collector_completion(self, run) -> CheckResult:
@@ -220,8 +236,14 @@ class QualityCheckSuite:
             details={"active_questions": n},
         )
 
-    def _ai_repetition_completeness(self) -> CheckResult:
-        if self.store.count("ai_answer_runs") == 0:
+    def _ai_repetition_completeness(self, *, run_id: str) -> CheckResult:
+        count = int(
+            self.store.fetchall(
+                "SELECT COUNT(*) AS n FROM ai_answer_runs WHERE run_id = ?",
+                (run_id,),
+            )[0]["n"]
+        )
+        if count == 0:
             return CheckResult(
                 check_name="ai_repetition_completeness",
                 scope="ai_visibility",
@@ -229,16 +251,18 @@ class QualityCheckSuite:
                 severity=Severity.ERROR,
                 threshold="3 per question/engine",
                 observed_value="no_rows",
-                details={"reason": "no ai_answer_runs"},
+                details={"reason": "no ai_answer_runs for run", "run_id": run_id},
             )
         incomplete = self.store.fetchall(
             """
             SELECT question_id, engine, COUNT(*) AS n,
                    COUNT(DISTINCT repetition_number) AS reps
             FROM ai_answer_runs
+            WHERE run_id = ?
             GROUP BY as_of_date, question_id, engine
             HAVING reps < 3 OR n < 3
-            """
+            """,
+            (run_id,),
         )
         return CheckResult(
             check_name="ai_repetition_completeness",
@@ -247,14 +271,20 @@ class QualityCheckSuite:
             severity=Severity.ERROR,
             threshold="3 per question/engine",
             observed_value=str(len(incomplete)),
-            details={"incomplete_groups": len(incomplete)},
+            details={"incomplete_groups": len(incomplete), "run_id": run_id},
         )
 
-    def _freshness(self, run) -> CheckResult:
+    def _freshness(self, run, *, run_id: str) -> CheckResult:
         as_of = date.fromisoformat(run["as_of_date"])
         issues = []
-        gsc_latest = self.store.fetchall("SELECT MAX(date) AS d FROM gsc_daily")
-        ga4_latest = self.store.fetchall("SELECT MAX(date) AS d FROM ga4_daily")
+        gsc_latest = self.store.fetchall(
+            "SELECT MAX(date) AS d FROM gsc_daily WHERE run_id = ?",
+            (run_id,),
+        )
+        ga4_latest = self.store.fetchall(
+            "SELECT MAX(date) AS d FROM ga4_daily WHERE run_id = ?",
+            (run_id,),
+        )
         if gsc_latest and gsc_latest[0]["d"]:
             expected = as_of - timedelta(days=self.config.freshness.gsc_days)
             latest = date.fromisoformat(gsc_latest[0]["d"])
@@ -269,9 +299,18 @@ class QualityCheckSuite:
             ("serper", self.config.freshness.serper_hours, "serp_daily"),
             ("ai_visibility", self.config.freshness.ai_visibility_hours, "ai_answer_runs"),
         ):
-            if self.store.count(table) == 0:
+            count = int(
+                self.store.fetchall(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE run_id = ?",
+                    (run_id,),
+                )[0]["n"]
+            )
+            if count == 0:
                 continue
-            row = self.store.fetchall(f"SELECT MAX(collected_at) AS t FROM {table}")[0]
+            row = self.store.fetchall(
+                f"SELECT MAX(collected_at) AS t FROM {table} WHERE run_id = ?",
+                (run_id,),
+            )[0]
             collected = _parse_iso(row["t"])
             if collected is None:
                 issues.append({"source": source, "reason": "missing collected_at"})
@@ -289,7 +328,7 @@ class QualityCheckSuite:
             details={"issues": issues},
         )
 
-    def _non_negative_metrics(self) -> CheckResult:
+    def _non_negative_metrics(self, *, run_id: str) -> CheckResult:
         offenders = {}
         checks = [
             ("gsc_daily", "clicks < 0 OR impressions < 0 OR position < 0"),
@@ -299,9 +338,20 @@ class QualityCheckSuite:
         ]
         total = 0
         for table, predicate in checks:
-            if self.store.count(table) == 0:
+            count = int(
+                self.store.fetchall(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE run_id = ?",
+                    (run_id,),
+                )[0]["n"]
+            )
+            if count == 0:
                 continue
-            n = int(self.store.fetchall(f"SELECT COUNT(*) AS n FROM {table} WHERE {predicate}")[0]["n"])
+            n = int(
+                self.store.fetchall(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE run_id = ? AND ({predicate})",
+                    (run_id,),
+                )[0]["n"]
+            )
             offenders[table] = n
             total += n
         return CheckResult(
@@ -314,8 +364,14 @@ class QualityCheckSuite:
             details=offenders,
         )
 
-    def _ctr_range(self) -> CheckResult:
-        if self.store.count("gsc_daily") == 0:
+    def _ctr_range(self, *, run_id: str) -> CheckResult:
+        count = int(
+            self.store.fetchall(
+                "SELECT COUNT(*) AS n FROM gsc_daily WHERE run_id = ?",
+                (run_id,),
+            )[0]["n"]
+        )
+        if count == 0:
             return CheckResult(
                 check_name="ctr_range",
                 scope="gsc",
@@ -323,11 +379,12 @@ class QualityCheckSuite:
                 severity=Severity.ERROR,
                 threshold="0<=ctr<=1",
                 observed_value="no_rows",
-                details={"reason": "no gsc_daily"},
+                details={"reason": "no gsc_daily for run", "run_id": run_id},
             )
         bad = int(
             self.store.fetchall(
-                "SELECT COUNT(*) AS n FROM gsc_daily WHERE ctr < 0 OR ctr > 1"
+                "SELECT COUNT(*) AS n FROM gsc_daily WHERE run_id = ? AND (ctr < 0 OR ctr > 1)",
+                (run_id,),
             )[0]["n"]
         )
         return CheckResult(
@@ -340,17 +397,33 @@ class QualityCheckSuite:
             details={"out_of_range": bad},
         )
 
-    def _position_validity(self) -> CheckResult:
+    def _position_validity(self, *, run_id: str) -> CheckResult:
         gsc_bad = 0
         serp_bad = 0
-        if self.store.count("gsc_daily"):
+        gsc_count = int(
+            self.store.fetchall(
+                "SELECT COUNT(*) AS n FROM gsc_daily WHERE run_id = ?",
+                (run_id,),
+            )[0]["n"]
+        )
+        serp_count = int(
+            self.store.fetchall(
+                "SELECT COUNT(*) AS n FROM serp_daily WHERE run_id = ?",
+                (run_id,),
+            )[0]["n"]
+        )
+        if gsc_count:
             gsc_bad = int(
-                self.store.fetchall("SELECT COUNT(*) AS n FROM gsc_daily WHERE position < 0")[0]["n"]
+                self.store.fetchall(
+                    "SELECT COUNT(*) AS n FROM gsc_daily WHERE run_id = ? AND position < 0",
+                    (run_id,),
+                )[0]["n"]
             )
-        if self.store.count("serp_daily"):
+        if serp_count:
             serp_bad = int(
                 self.store.fetchall(
-                    "SELECT COUNT(*) AS n FROM serp_daily WHERE sunnystep_position < 0 OR sunnystep_position > 100"
+                    "SELECT COUNT(*) AS n FROM serp_daily WHERE run_id = ? AND (sunnystep_position < 0 OR sunnystep_position > 100)",
+                    (run_id,),
                 )[0]["n"]
             )
         return CheckResult(
@@ -417,35 +490,39 @@ class QualityCheckSuite:
             details=result.details,
         )
 
-    def _raw_ai_answer_presence(self) -> CheckResult:
-        if self.store.count("ai_answer_runs") == 0:
+    def _raw_ai_answer_presence(self, *, run_id: str) -> CheckResult:
+        count = int(
+            self.store.fetchall(
+                "SELECT COUNT(*) AS n FROM ai_answer_runs WHERE run_id = ?",
+                (run_id,),
+            )[0]["n"]
+        )
+        if count == 0:
             return CheckResult(
                 check_name="raw_ai_answer_presence",
                 scope="ai_visibility",
                 status=CheckStatus.SKIPPED,
-                severity=Severity.CRITICAL,
-                threshold="raw_answer or raw_record_id",
+                severity=Severity.ERROR,
+                threshold="raw answer present",
                 observed_value="no_rows",
-                details={"reason": "no ai_answer_runs"},
+                details={"run_id": run_id},
             )
         bad = int(
             self.store.fetchall(
-                """
-                SELECT COUNT(*) AS n FROM ai_answer_runs
-                WHERE (raw_answer IS NULL OR TRIM(raw_answer) = '')
-                  AND (raw_record_id IS NULL OR TRIM(raw_record_id) = '')
-                """
+                "SELECT COUNT(*) AS n FROM ai_answer_runs WHERE run_id = ? AND (raw_answer IS NULL OR TRIM(raw_answer) = '')",
+                (run_id,),
             )[0]["n"]
         )
         return CheckResult(
             check_name="raw_ai_answer_presence",
             scope="ai_visibility",
             status=_pass_fail(bad == 0),
-            severity=Severity.CRITICAL,
-            threshold="raw_answer or raw_record_id",
+            severity=Severity.ERROR,
+            threshold="raw answer present",
             observed_value=str(bad),
-            details={"missing": bad},
+            details={"missing": bad, "run_id": run_id},
         )
+
 
     def _reconciliation_checks(self, run) -> List[CheckResult]:
         as_of = date.fromisoformat(run["as_of_date"])
@@ -462,7 +539,7 @@ class QualityCheckSuite:
         )
         return [gsc, ga4]
 
-    def _url_validity(self) -> CheckResult:
+    def _url_validity(self, *, run_id: str) -> CheckResult:
         bad = 0
         samples: List[str] = []
         queries = [
@@ -471,18 +548,35 @@ class QualityCheckSuite:
             ("ai_answer_runs", "target_page"),
         ]
         for table, column in queries:
-            if self.store.count(table) == 0:
+            count = int(
+                self.store.fetchall(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE run_id = ?",
+                    (run_id,),
+                )[0]["n"]
+            )
+            if count == 0:
                 continue
-            for row in self.store.fetchall(f"SELECT {column} AS url FROM {table}"):
+            for row in self.store.fetchall(
+                f"SELECT {column} AS url FROM {table} WHERE run_id = ?",
+                (run_id,),
+            ):
                 url = row["url"] or ""
                 parsed = urlparse(url)
                 if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                     bad += 1
                     if len(samples) < 5:
                         samples.append(url)
-        # cited URLs in AI answers
-        if self.store.count("ai_answer_runs"):
-            for row in self.store.fetchall("SELECT cited_urls FROM ai_answer_runs"):
+        count_ai = int(
+            self.store.fetchall(
+                "SELECT COUNT(*) AS n FROM ai_answer_runs WHERE run_id = ?",
+                (run_id,),
+            )[0]["n"]
+        )
+        if count_ai:
+            for row in self.store.fetchall(
+                "SELECT cited_urls FROM ai_answer_runs WHERE run_id = ?",
+                (run_id,),
+            ):
                 try:
                     urls = json.loads(row["cited_urls"] or "[]")
                 except json.JSONDecodeError:
@@ -501,7 +595,38 @@ class QualityCheckSuite:
             severity=Severity.WARNING,
             threshold="http(s) URLs",
             observed_value=str(bad),
-            details={"invalid": bad, "samples": samples},
+            details={"invalid": bad, "samples": samples, "run_id": run_id},
+        )
+
+
+
+    def _chatgpt_search_capability(self, *, run_id: str) -> CheckResult:
+        rows = self.store.fetchall(
+            "SELECT search_enabled, COUNT(*) AS n FROM ai_answer_runs WHERE run_id = ? AND engine = 'chatgpt' GROUP BY search_enabled",
+            (run_id,),
+        )
+        if not rows:
+            return CheckResult(
+                check_name="chatgpt_search_capability",
+                scope="ai_visibility",
+                status=CheckStatus.SKIPPED,
+                severity=Severity.CRITICAL,
+                threshold="search_enabled for ChatGPT GEO rows",
+                observed_value="no_chatgpt_rows",
+                details={"run_id": run_id},
+            )
+        enabled = sum(int(r["n"]) for r in rows if int(r["search_enabled"] or 0) == 1)
+        disabled = sum(int(r["n"]) for r in rows if int(r["search_enabled"] or 0) == 0)
+        # Fail closed: any non-search ChatGPT rows in the run block GEO publish confidence.
+        ok = disabled == 0 and enabled > 0
+        return CheckResult(
+            check_name="chatgpt_search_capability",
+            scope="ai_visibility",
+            status=_pass_fail(ok),
+            severity=Severity.CRITICAL,
+            threshold="all chatgpt rows search_enabled=1",
+            observed_value=f"enabled={enabled};disabled={disabled}",
+            details={"enabled": enabled, "disabled": disabled, "run_id": run_id},
         )
 
     def _lark_publish_parity(self) -> CheckResult:
