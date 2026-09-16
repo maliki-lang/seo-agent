@@ -847,6 +847,99 @@ class TrackingStore:
                 values,
             )
 
+    def update_keyword_candidate(self, candidate_id: str, fields: Dict[str, Any]) -> None:
+        if not fields:
+            return
+        allowed = {
+            "ga4_organic_sessions",
+            "ga4_engaged_sessions",
+            "ga4_purchases",
+            "ga4_revenue",
+            "ga4_conversion_rate",
+            "ga4_engagement_rate",
+            "ga4_match_status",
+            "ga4_value_score",
+            "page_type",
+            "serper_position",
+            "serper_ranking_url",
+            "serper_top_10_domains",
+            "serper_intent",
+            "serper_validation_score",
+            "serper_run_id",
+            "serper_collected_at",
+            "proposed_target_ranks",
+            "serper_ai_overview_status",
+            "serper_result_types_json",
+            "business_relevance_score",
+            "gsc_opportunity_score",
+            "evidence_confidence_score",
+            "final_selection_score",
+            "decision",
+            "decision_reason",
+            "proposed_target_page",
+            "reviewed_target_page",
+            "reviewed_by",
+            "reviewed_at",
+            "updated_at",
+        }
+        assignments = []
+        values: List[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                raise SchemaMismatchError(f"Unsupported keyword_candidate field: {key}")
+            if key in {"serper_top_10_domains", "serper_result_types_json"} and value is not None:
+                value = json.dumps(value, sort_keys=True)
+            assignments.append(f"{key} = ?")
+            values.append(value)
+        values.append(candidate_id)
+        with self.connection() as conn:
+            conn.execute(
+                f"UPDATE keyword_candidates SET {', '.join(assignments)} WHERE candidate_id = ?",
+                values,
+            )
+
+    def update_catalogue_build(self, build_id: str, fields: Dict[str, Any]) -> None:
+        if not fields:
+            return
+        allowed = {
+            "status",
+            "gsc_source_run_ids",
+            "ga4_source_run_ids",
+            "serper_source_run_ids",
+            "ga4_window_start",
+            "ga4_window_end",
+            "ga4_match_report_json",
+            "serper_validation_report_json",
+            "funnel_json",
+            "notes",
+            "approved_by",
+            "approved_at",
+            "activated_at",
+        }
+        json_fields = {
+            "gsc_source_run_ids",
+            "ga4_source_run_ids",
+            "serper_source_run_ids",
+            "ga4_match_report_json",
+            "serper_validation_report_json",
+            "funnel_json",
+        }
+        assignments = []
+        values: List[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                raise SchemaMismatchError(f"Unsupported catalogue_build field: {key}")
+            if key in json_fields and value is not None and not isinstance(value, str):
+                value = json.dumps(value, sort_keys=True)
+            assignments.append(f"{key} = ?")
+            values.append(value)
+        values.append(build_id)
+        with self.connection() as conn:
+            conn.execute(
+                f"UPDATE catalogue_builds SET {', '.join(assignments)} WHERE build_id = ?",
+                values,
+            )
+
     def count(self, table: str) -> int:
         if table not in {
             "gsc_daily",

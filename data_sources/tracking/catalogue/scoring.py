@@ -1,9 +1,11 @@
-"""GSC opportunity scoring and Phase-6 selection decisions for catalogue candidates."""
+"""Full catalogue selection scoring including GA4 and Serper components."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from decimal import Decimal
 from typing import Optional, Sequence, Tuple
+
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -11,6 +13,8 @@ class ScoreBreakdown:
     gsc_opportunity_score: float
     business_relevance_score: float
     evidence_confidence_score: float
+    ga4_value_score: Optional[float]
+    serper_validation_score: Optional[float]
     final_selection_score: float
     reasons: Tuple[str, ...]
 
@@ -85,6 +89,92 @@ def gsc_opportunity_score(
     return round(min(1.0, score), 4), tuple(reasons) or ("insufficient_evidence",)
 
 
+def ga4_value_score(
+    *,
+    sessions: Optional[int],
+    engaged_sessions: Optional[int],
+    purchases: Optional[int],
+    revenue: Optional[Decimal],
+    page_type: str,
+) -> Tuple[Optional[float], Tuple[str, ...]]:
+    """Return None when GA4 metrics are unavailable (unmatched), never invent zeros."""
+    if sessions is None:
+        return None, ("ga4_unavailable",)
+    sessions_i = int(sessions)
+    engaged_i = int(engaged_sessions or 0)
+    purchases_i = int(purchases or 0)
+    revenue_f = float(revenue or 0)
+    engagement = (engaged_i / sessions_i) if sessions_i > 0 else 0.0
+    conversion = (purchases_i / sessions_i) if sessions_i > 0 else 0.0
+    reasons = [f"page_type_{page_type or 'other'}"]
+
+    session_component = min(1.0, sessions_i / 50.0)
+    engagement_component = min(1.0, engagement)
+    purchase_component = min(1.0, purchases_i / 3.0)
+    revenue_component = min(1.0, revenue_f / 100.0)
+
+    if page_type in {"product", "collection"}:
+        score = (
+            0.20 * session_component
+            + 0.15 * engagement_component
+            + 0.35 * purchase_component
+            + 0.30 * revenue_component
+        )
+        reasons.append("commercial_page_weights")
+    elif page_type == "article":
+        score = (
+            0.35 * session_component
+            + 0.45 * engagement_component
+            + 0.10 * purchase_component
+            + 0.10 * revenue_component
+        )
+        reasons.append("educational_page_weights")
+    else:
+        score = (
+            0.30 * session_component
+            + 0.30 * engagement_component
+            + 0.20 * purchase_component
+            + 0.20 * revenue_component
+        )
+        reasons.append("other_page_weights")
+
+    if sessions_i == 0 and purchases_i == 0 and revenue_f == 0:
+        reasons.append("ga4_matched_zero_activity")
+    return round(min(1.0, score), 4), tuple(reasons)
+
+
+def serper_validation_score(
+    *,
+    position: Optional[int],
+    proposed_target_ranks: Optional[bool],
+    validated: bool,
+) -> Tuple[Optional[float], Tuple[str, ...]]:
+    if not validated or position is None:
+        return None, ("serper_not_validated",)
+    reasons = []
+    if position <= 0:
+        score = 0.15
+        reasons.append("sunnystep_absent_in_inspected_range")
+    elif position <= 3:
+        score = 0.95
+        reasons.append("sunnystep_top_3")
+    elif position <= 10:
+        score = 0.75
+        reasons.append("sunnystep_page_1")
+    elif position <= 20:
+        score = 0.45
+        reasons.append("sunnystep_page_2")
+    else:
+        score = 0.25
+        reasons.append("sunnystep_beyond_20")
+    if proposed_target_ranks:
+        score = min(1.0, score + 0.1)
+        reasons.append("proposed_target_page_ranks")
+    else:
+        reasons.append("proposed_target_page_absent")
+    return round(score, 4), tuple(reasons)
+
+
 def score_candidate(
     *,
     clicks: int,
@@ -97,6 +187,14 @@ def score_candidate(
     source_date_count: int,
     relevance_terms: Sequence[str],
     min_impressions: int,
+    ga4_sessions: Optional[int] = None,
+    ga4_engaged_sessions: Optional[int] = None,
+    ga4_purchases: Optional[int] = None,
+    ga4_revenue: Optional[Decimal] = None,
+    page_type: str = "other",
+    serper_position: Optional[int] = None,
+    proposed_target_ranks: Optional[bool] = None,
+    serper_validated: bool = False,
 ) -> ScoreBreakdown:
     opp, opp_reasons = gsc_opportunity_score(
         clicks=clicks,
@@ -113,18 +211,52 @@ def score_candidate(
         source_date_count=source_date_count,
         min_impressions=min_impressions,
     )
-    # Phase 6 weights: GSC 0.40 + business 0.20 + evidence 0.10; GA4/Serper reserved for Phase 7.
-    # Renormalize available components: 0.40/0.70, 0.20/0.70, 0.10/0.70.
-    final = round((opp * 0.40 + relevance * 0.20 + confidence * 0.10) / 0.70, 4)
+    ga4_score, ga4_reasons = ga4_value_score(
+        sessions=ga4_sessions,
+        engaged_sessions=ga4_engaged_sessions,
+        purchases=ga4_purchases,
+        revenue=ga4_revenue,
+        page_type=page_type,
+    )
+    serper_score, serper_reasons = serper_validation_score(
+        position=serper_position,
+        proposed_target_ranks=proposed_target_ranks,
+        validated=serper_validated,
+    )
+
+    # Spec default weights. Missing GA4 is omitted and remaining weights renormalized.
+    # Serper validation score is stored for review; it is not search-volume evidence and is
+    # not part of the default final formula unless validated (then a small visibility weight).
+    if ga4_score is None and serper_score is None:
+        final = round((opp * 0.40 + relevance * 0.20 + confidence * 0.10) / 0.70, 4)
+    elif ga4_score is None and serper_score is not None:
+        final = round(
+            (opp * 0.40 + relevance * 0.20 + confidence * 0.10 + serper_score * 0.10) / 0.80,
+            4,
+        )
+    elif ga4_score is not None and serper_score is None:
+        final = round(opp * 0.40 + ga4_score * 0.30 + relevance * 0.20 + confidence * 0.10, 4)
+    else:
+        # Keep GA4 commercial weight dominant; fold Serper as visibility confirmation.
+        final = round(
+            (opp * 0.40 + ga4_score * 0.30 + relevance * 0.20 + confidence * 0.10 + serper_score * 0.10)
+            / 1.10,
+            4,
+        )
+
     reasons = list(opp_reasons)
     if relevance <= 0:
         reasons.append("low_business_relevance")
     else:
         reasons.append("business_relevant")
+    reasons.extend(ga4_reasons)
+    reasons.extend(serper_reasons)
     return ScoreBreakdown(
         gsc_opportunity_score=opp,
         business_relevance_score=relevance,
         evidence_confidence_score=confidence,
+        ga4_value_score=ga4_score,
+        serper_validation_score=serper_score,
         final_selection_score=final,
         reasons=tuple(reasons),
     )

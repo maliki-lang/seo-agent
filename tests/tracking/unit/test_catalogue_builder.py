@@ -63,7 +63,28 @@ def test_scoring_components_deterministic():
     assert 0 < score.gsc_opportunity_score <= 1
     assert score.business_relevance_score > 0
     assert score.evidence_confidence_score > 0
+    assert score.ga4_value_score is None
+    assert score.serper_validation_score is None
     assert score.final_selection_score > 0
+    with_ga4 = score_candidate(
+        clicks=5,
+        impressions=200,
+        weighted_position=8.0,
+        weighted_ctr=0.025,
+        multi_page=True,
+        normalized_keyword="comfortable walking shoes singapore",
+        source_row_count=4,
+        source_date_count=10,
+        relevance_terms=("comfortable", "shoes", "walking", "singapore"),
+        min_impressions=10,
+        ga4_sessions=40,
+        ga4_engaged_sessions=28,
+        ga4_purchases=2,
+        ga4_revenue=__import__("decimal").Decimal("80"),
+        page_type="collection",
+    )
+    assert with_ga4.ga4_value_score is not None
+    assert with_ga4.final_selection_score != score.final_selection_score
     opp, reasons = gsc_opportunity_score(
         clicks=0,
         impressions=2,

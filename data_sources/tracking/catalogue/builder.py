@@ -415,7 +415,7 @@ def build_keyword_catalogue(
             "GSC aggregation reconciliation failed: " + "; ".join(reconciliation_errors[:5])
         )
 
-    return {
+    result = {
         "build_id": build_id,
         "build_type": CatalogueBuildType.KEYWORD.value,
         "status": status,
@@ -437,9 +437,20 @@ def build_keyword_catalogue(
             "v1 catalogue is biased toward queries where Sunnystep already received Google impressions",
             "Semrush deferred pending permission",
             "customer/support language sources unavailable",
-            "GA4 enrichment and Serper validation deferred to Phase 7",
+            "Serper validation requires explicit catalogue validate-serp",
         ],
     }
+    if ga4_start is not None and ga4_end is not None:
+        from .enrich import enrich_build_with_ga4
+
+        result["ga4_enrichment"] = enrich_build_with_ga4(
+            store,
+            config,
+            build_id=build_id,
+            ga4_start=ga4_start,
+            ga4_end=ga4_end,
+        )
+    return result
 
 
 def _reconcile_sample(store: TrackingStore, build_id: str, *, limit: int) -> List[str]:

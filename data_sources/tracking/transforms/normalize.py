@@ -88,6 +88,88 @@ def canonicalize_url(value: str) -> str:
     return urlunparse((scheme, host, path, "", parsed.query, ""))
 
 
+DEFAULT_SITE_HOST = "sunnystep.com"
+_HOST_ALIASES = {
+    "gosunnystep.myshopify.com": DEFAULT_SITE_HOST,
+    "www.sunnystep.com": DEFAULT_SITE_HOST,
+}
+
+
+def _normalize_join_host(host: str) -> str:
+    host = normalize_host(host)
+    return _HOST_ALIASES.get(host, host)
+
+
+def _normalize_join_path(path: str) -> str:
+    text = path or "/"
+    if "?" in text:
+        text = text.split("?", 1)[0]
+    if "#" in text:
+        text = text.split("#", 1)[0]
+    text = re.sub(r"/{2,}", "/", text)
+    if not text.startswith("/"):
+        text = "/" + text
+    if text != "/" and text.endswith("/"):
+        text = text[:-1]
+    return text or "/"
+
+
+def canonical_page_key(value: str, *, default_host: str = DEFAULT_SITE_HOST) -> str:
+    """Join key for GSC page URLs and GA4 landingPage path/URL values.
+
+    Rules: lowercase host, drop query/fragment, normalize trailing slash,
+    absolute URL vs path equivalence, preserve path case, map known host aliases.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if lowered in {"(not set)", "not set", "(none)", "none", "null"}:
+        return ""
+    if lowered.startswith(("javascript:", "data:", "file:", "vbscript:")):
+        return ""
+
+    if "://" in raw:
+        parsed = urlparse(raw)
+        host = _normalize_join_host(parsed.netloc) or default_host
+        path = _normalize_join_path(parsed.path or "/")
+        return f"{host}{path}"
+
+    # Path or hostless relative landing page from GA4.
+    if raw.startswith("/") or "/" in raw.split("?", 1)[0]:
+        path = _normalize_join_path(raw)
+        return f"{default_host}{path}"
+
+    # Bare host or host/path without scheme.
+    if "." in raw.split("/")[0]:
+        fake = canonicalize_url(raw)
+        if not fake:
+            return ""
+        parsed = urlparse(fake)
+        host = _normalize_join_host(parsed.netloc) or default_host
+        path = _normalize_join_path(parsed.path or "/")
+        # Drop query retained by canonicalize_url.
+        return f"{host}{path}"
+
+    path = _normalize_join_path("/" + raw)
+    return f"{default_host}{path}"
+
+
+def infer_page_type(page_or_key: str) -> str:
+    key = canonical_page_key(page_or_key)
+    path = "/"
+    if "/" in key:
+        path = "/" + key.split("/", 1)[1]
+    lowered = path.lower()
+    if lowered.startswith("/blogs/") or lowered.startswith("/blog/"):
+        return "article"
+    if lowered.startswith("/collections/"):
+        return "collection"
+    if lowered.startswith("/products/"):
+        return "product"
+    return "other"
+
+
 def normalize_query(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip())
 
