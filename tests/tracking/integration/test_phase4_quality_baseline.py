@@ -150,7 +150,7 @@ def _seed(store: TrackingStore, run_id: str):
                     api_cost_usd=Decimal("0.01"),
                     latency_ms=10,
                     model="fixture",
-                    search_enabled=False,
+                    search_enabled=engine == Engine.CHATGPT,
                     parser_version="ai_parser_v1",
                     raw_record_id=f"raw-{engine.value}-{rep}",
                 )

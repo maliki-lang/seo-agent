@@ -71,7 +71,7 @@ class QualityCheckSuite:
         results.append(self._position_validity(run_id=run_id))
         results.append(self._api_cost_cap(run))
         results.append(self._run_duration(run))
-        results.append(self._backfill_preservation())
+        results.append(self._backfill_preservation(run_id=run_id))
         results.append(self._raw_ai_answer_presence(run_id=run_id))
         results.extend(self._reconciliation_checks(run))
         results.append(self._url_validity(run_id=run_id))
@@ -476,10 +476,10 @@ class QualityCheckSuite:
             details={"duration_seconds": duration, "limit_seconds": limit},
         )
 
-    def _backfill_preservation(self) -> CheckResult:
+    def _backfill_preservation(self, *, run_id: str) -> CheckResult:
         # Natural-key uniqueness already enforces no duplicated keys; this check
         # confirms uniqueness plus that reruns leave counts stable for identical hashes.
-        result = self._natural_key_uniqueness()
+        result = self._natural_key_uniqueness(run_id=run_id)
         return CheckResult(
             check_name="backfill_preservation",
             scope="storage",
