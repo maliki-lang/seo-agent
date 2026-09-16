@@ -717,8 +717,8 @@ class TrackingStore:
                     gsc_source_run_ids, ga4_source_run_ids, serper_source_run_ids,
                     source_fingerprint, methodology_version, created_by, created_at,
                     approved_by, approved_at, activated_at, notes, funnel_json,
-                    ga4_window_start, ga4_window_end
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ga4_window_start, ga4_window_end, parent_build_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["build_id"],
@@ -740,6 +740,7 @@ class TrackingStore:
                     json.dumps(row.get("funnel_json") or {}, sort_keys=True),
                     row.get("ga4_window_start"),
                     row.get("ga4_window_end"),
+                    row.get("parent_build_id"),
                 ),
             )
 
@@ -860,6 +861,7 @@ class TrackingStore:
             "ga4_match_status",
             "ga4_value_score",
             "page_type",
+            "cluster_id",
             "serper_position",
             "serper_ranking_url",
             "serper_top_10_domains",
@@ -915,6 +917,7 @@ class TrackingStore:
             "approved_by",
             "approved_at",
             "activated_at",
+            "parent_build_id",
         }
         json_fields = {
             "gsc_source_run_ids",
@@ -961,11 +964,175 @@ class TrackingStore:
             "catalogue_clusters",
             "ai_question_candidates",
             "ai_question_sources",
+            "catalogue_comparisons",
         }:
             raise SchemaMismatchError(f"Unknown table {table}")
         with self.connection() as conn:
             row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
             return int(row["n"])
+
+    def insert_catalogue_cluster(self, row: Dict[str, Any]) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO catalogue_clusters(
+                    cluster_id, build_id, cluster_name, primary_intent, primary_target_page,
+                    member_candidate_ids, rationale, method, reviewed_by, reviewed_at, created_at,
+                    approval_status, supporting_pages_json, gsc_clicks, gsc_impressions,
+                    ga4_sessions, ga4_purchases, ga4_revenue
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["cluster_id"],
+                    row["build_id"],
+                    row["cluster_name"],
+                    row["primary_intent"],
+                    row["primary_target_page"],
+                    json.dumps(row.get("member_candidate_ids") or [], sort_keys=True),
+                    row["rationale"],
+                    row["method"],
+                    row.get("reviewed_by"),
+                    row.get("reviewed_at"),
+                    row["created_at"],
+                    row.get("approval_status") or "draft",
+                    json.dumps(row.get("supporting_pages_json") or [], sort_keys=True),
+                    int(row.get("gsc_clicks") or 0),
+                    int(row.get("gsc_impressions") or 0),
+                    row.get("ga4_sessions"),
+                    row.get("ga4_purchases"),
+                    row.get("ga4_revenue"),
+                ),
+            )
+
+    def insert_ai_question_candidates(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        values = [
+            (
+                row["question_candidate_id"],
+                row["build_id"],
+                row["question"],
+                row.get("cluster_id"),
+                row["intent"],
+                row["proposed_target_page"],
+                row["transformation_method"],
+                json.dumps(row.get("source_keyword_ids") or [], sort_keys=True),
+                json.dumps(row.get("source_candidate_ids") or [], sort_keys=True),
+                row["decision"],
+                row.get("decision_reason"),
+                row.get("reviewed_by"),
+                row.get("reviewed_at"),
+                row["created_at"],
+                row["updated_at"],
+            )
+            for row in rows
+        ]
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO ai_question_candidates(
+                    question_candidate_id, build_id, question, cluster_id, intent,
+                    proposed_target_page, transformation_method, source_keyword_ids,
+                    source_candidate_ids, decision, decision_reason, reviewed_by,
+                    reviewed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+
+    def insert_ai_question_sources(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        values = [
+            (
+                row["question_source_id"],
+                row["question_candidate_id"],
+                row.get("keyword_id"),
+                row["candidate_id"],
+                row["gsc_natural_key"],
+                row["gsc_run_id"],
+                row["raw_gsc_query"],
+                row["relationship"],
+                row["created_at"],
+            )
+            for row in rows
+        ]
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO ai_question_sources(
+                    question_source_id, question_candidate_id, keyword_id, candidate_id,
+                    gsc_natural_key, gsc_run_id, raw_gsc_query, relationship, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+
+    def update_ai_question_candidate(self, question_candidate_id: str, fields: Dict[str, Any]) -> None:
+        if not fields:
+            return
+        allowed = {
+            "question",
+            "cluster_id",
+            "intent",
+            "proposed_target_page",
+            "transformation_method",
+            "decision",
+            "decision_reason",
+            "reviewed_by",
+            "reviewed_at",
+            "updated_at",
+            "source_keyword_ids",
+            "source_candidate_ids",
+        }
+        assignments = []
+        values: List[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                raise SchemaMismatchError(f"Unsupported ai_question_candidate field: {key}")
+            if key in {"source_keyword_ids", "source_candidate_ids"} and value is not None:
+                value = json.dumps(value, sort_keys=True)
+            assignments.append(f"{key} = ?")
+            values.append(value)
+        values.append(question_candidate_id)
+        with self.connection() as conn:
+            conn.execute(
+                f"UPDATE ai_question_candidates SET {', '.join(assignments)} WHERE question_candidate_id = ?",
+                values,
+            )
+
+    def insert_catalogue_comparisons(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        values = [
+            (
+                row["comparison_id"],
+                row["build_id"],
+                row["provisional_type"],
+                row["provisional_id"],
+                row["provisional_text"],
+                row.get("provisional_cluster"),
+                row.get("provisional_target_page"),
+                row["decision"],
+                row["decision_reason"],
+                row.get("matched_candidate_id"),
+                row.get("matched_question_id"),
+                json.dumps(row.get("source_references_json") or [], sort_keys=True),
+                row["created_at"],
+            )
+            for row in rows
+        ]
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO catalogue_comparisons(
+                    comparison_id, build_id, provisional_type, provisional_id, provisional_text,
+                    provisional_cluster, provisional_target_page, decision, decision_reason,
+                    matched_candidate_id, matched_question_id, source_references_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
 
     def fetchall(self, sql: str, params: Sequence[Any] = ()) -> List[sqlite3.Row]:
         with self.connection() as conn:
