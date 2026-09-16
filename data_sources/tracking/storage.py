@@ -859,6 +859,8 @@ class TrackingStore:
             "ga4_conversion_rate",
             "ga4_engagement_rate",
             "ga4_match_status",
+            "ga4_match_page",
+            "ga4_shared_page",
             "ga4_value_score",
             "page_type",
             "cluster_id",

@@ -155,6 +155,19 @@ def canonical_page_key(value: str, *, default_host: str = DEFAULT_SITE_HOST) -> 
     return f"{default_host}{path}"
 
 
+def is_homepage_page_key(page_or_key: str, *, default_host: str = DEFAULT_SITE_HOST) -> bool:
+    """True when the page or join key is site root (e.g. sunnystep.com/)."""
+    raw = (page_or_key or "").strip()
+    if not raw:
+        return False
+    # Accept an already-canonical join key without re-parsing (canonical_page_key
+    # treats "host/" as a relative path and would otherwise mangle it).
+    if raw in {default_host, f"{default_host}/"}:
+        return True
+    key = canonical_page_key(raw, default_host=default_host)
+    return key in {default_host, f"{default_host}/"}
+
+
 def infer_page_type(page_or_key: str) -> str:
     key = canonical_page_key(page_or_key)
     path = "/"

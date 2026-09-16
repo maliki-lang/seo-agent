@@ -8,6 +8,24 @@ from typing import Optional, Sequence, Tuple
 from dataclasses import dataclass
 
 
+def refresh_decision_reason(existing: Optional[str], score_reasons: Sequence[str]) -> str:
+    """Keep decision prefix(es); replace the score-reason suffix with fresh reasons.
+
+    Builder format is ``decision_code;reason1,reason2,...``. Selected shortlist
+    prepends ``selected_phase6_shortlist;``. Enrichment/Serper must refresh the
+    suffix so stale tokens like ``ga4_unavailable`` / ``serper_not_validated``
+    do not survive after metrics are attached.
+    """
+    suffix = ",".join(score_reasons)
+    existing = (existing or "").strip()
+    if not existing:
+        return suffix
+    if ";" in existing:
+        prefix = existing.rsplit(";", 1)[0]
+        return f"{prefix};{suffix}" if prefix else suffix
+    return f"{existing};{suffix}"
+
+
 @dataclass(frozen=True)
 class ScoreBreakdown:
     gsc_opportunity_score: float

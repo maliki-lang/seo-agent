@@ -80,6 +80,9 @@ def export_review(
         "ga4_organic_sessions",
         "ga4_purchases",
         "ga4_revenue",
+        "ga4_match_status",
+        "ga4_match_page",
+        "ga4_shared_page",
         "serper_position",
         "final_selection_score",
         "source_refs",
@@ -111,6 +114,13 @@ def export_review(
                 "ga4_organic_sessions": cand["ga4_organic_sessions"],
                 "ga4_purchases": cand["ga4_purchases"],
                 "ga4_revenue": cand["ga4_revenue"],
+                "ga4_match_status": cand["ga4_match_status"] or "",
+                "ga4_match_page": cand["ga4_match_page"] or "",
+                "ga4_shared_page": (
+                    ""
+                    if cand["ga4_shared_page"] is None
+                    else int(cand["ga4_shared_page"])
+                ),
                 "serper_position": cand["serper_position"],
                 "final_selection_score": cand["final_selection_score"],
                 "source_refs": "|".join(s["gsc_natural_key"] for s in sources),
@@ -143,6 +153,9 @@ def export_review(
                     "ga4_organic_sessions": "",
                     "ga4_purchases": "",
                     "ga4_revenue": "",
+                    "ga4_match_status": "",
+                    "ga4_match_page": "",
+                    "ga4_shared_page": "",
                     "serper_position": "",
                     "final_selection_score": "",
                     "source_refs": "|".join(s["gsc_natural_key"] for s in sources),

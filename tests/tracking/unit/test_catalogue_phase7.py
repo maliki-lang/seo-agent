@@ -2,8 +2,37 @@
 
 from decimal import Decimal
 
-from data_sources.tracking.catalogue.scoring import ga4_value_score, serper_validation_score
+from data_sources.tracking.catalogue.scoring import (
+    ga4_value_score,
+    refresh_decision_reason,
+    serper_validation_score,
+)
 from data_sources.tracking.transforms.normalize import canonical_page_key, infer_page_type
+
+
+def test_refresh_decision_reason_keeps_prefix_replaces_score_suffix():
+    fresh = ("high_impr_pos_4_10_weak_ctr", "business_relevant", "page_type_collection")
+    assert refresh_decision_reason(
+        "meets_phase6_evidence_threshold_awaiting_review;ga4_unavailable,serper_not_validated",
+        fresh,
+    ) == (
+        "meets_phase6_evidence_threshold_awaiting_review;"
+        "high_impr_pos_4_10_weak_ctr,business_relevant,page_type_collection"
+    )
+    assert refresh_decision_reason(
+        "selected_phase6_shortlist;meets_phase6_evidence_threshold_awaiting_review;"
+        "ga4_unavailable,serper_not_validated",
+        fresh,
+    ).startswith("selected_phase6_shortlist;meets_phase6_evidence_threshold_awaiting_review;")
+    assert "ga4_unavailable" not in refresh_decision_reason(
+        "selected_phase6_shortlist;meets_phase6_evidence_threshold_awaiting_review;"
+        "ga4_unavailable",
+        fresh,
+    )
+    assert refresh_decision_reason(None, fresh) == ",".join(fresh)
+    assert refresh_decision_reason("imported_from_review", fresh) == (
+        "imported_from_review;" + ",".join(fresh)
+    )
 
 
 def test_canonical_page_key_joins_url_and_path():
@@ -16,6 +45,18 @@ def test_canonical_page_key_joins_url_and_path():
     )
     assert canonical_page_key("(not set)") == ""
     assert canonical_page_key("") == ""
+
+
+def test_is_homepage_page_key():
+    from data_sources.tracking.transforms.normalize import is_homepage_page_key
+
+    assert is_homepage_page_key("https://sunnystep.com/") is True
+    assert is_homepage_page_key("http://sunnystep.com/") is True
+    assert is_homepage_page_key("https://www.sunnystep.com") is True
+    assert is_homepage_page_key("/") is True
+    assert is_homepage_page_key("sunnystep.com/") is True  # already-canonical join key
+    assert is_homepage_page_key("https://sunnystep.com/collections/mules") is False
+    assert is_homepage_page_key("") is False
 
 
 def test_infer_page_type():

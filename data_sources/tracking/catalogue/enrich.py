@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,9 +12,21 @@ from ..enums import ChannelClass
 from ..exceptions import ConfigurationError, DataQualityError
 from ..reports.metrics_calc import conversion_rate, engagement_rate
 from ..storage import TrackingStore
-from ..transforms.normalize import canonical_page_key, infer_page_type, utc_now_iso
-from .scoring import score_candidate
+from ..transforms.normalize import (
+    canonical_page_key,
+    infer_page_type,
+    is_homepage_page_key,
+    utc_now_iso,
+)
+from .scoring import refresh_decision_reason, score_candidate
 from .builder import thresholds_from_config
+
+# Homepage organic totals are site-level, not keyword-level. Stamping them onto
+# every GSC query whose primary page is "/" inflates selection scores.
+GA4_STATUS_MATCHED = "matched"
+GA4_STATUS_UNMATCHED = "unmatched"
+GA4_STATUS_UNAVAILABLE = "unavailable"
+GA4_STATUS_SUPPRESSED_HOMEPAGE = "suppressed_homepage"
 
 
 def default_ga4_window(store: TrackingStore, *, days: int = 90) -> Tuple[date, date]:
@@ -83,6 +95,27 @@ def _aggregate_ga4_by_page(
     return by_page, sorted(run_ids)
 
 
+def _candidate_page_key(cand: Any) -> str:
+    page = cand["primary_observed_page"] or cand["proposed_target_page"] or ""
+    return canonical_page_key(page)
+
+
+def _score_reasons_for_status(status: str, reasons: Tuple[str, ...]) -> Tuple[str, ...]:
+    if status != GA4_STATUS_SUPPRESSED_HOMEPAGE:
+        return reasons
+    out: List[str] = []
+    replaced = False
+    for reason in reasons:
+        if reason == "ga4_unavailable":
+            out.append("ga4_homepage_fanout_suppressed")
+            replaced = True
+        else:
+            out.append(reason)
+    if not replaced:
+        out.append("ga4_homepage_fanout_suppressed")
+    return tuple(out)
+
+
 def enrich_build_with_ga4(
     store: TrackingStore,
     config: TrackingConfig,
@@ -91,7 +124,11 @@ def enrich_build_with_ga4(
     ga4_start: Optional[date] = None,
     ga4_end: Optional[date] = None,
 ) -> Dict[str, Any]:
-    """Attach GA4 organic page metrics to candidates. Unmatched pages stay NULL, not zero."""
+    """Attach GA4 organic page metrics to candidates. Unmatched pages stay NULL, not zero.
+
+    Homepage joins are recorded for provenance but suppressed from scoring: site-root
+    organic totals must not be treated as keyword-level commercial evidence.
+    """
     store.migrate()
     builds = store.fetchall("SELECT * FROM catalogue_builds WHERE build_id = ?", (build_id,))
     if not builds:
@@ -114,13 +151,9 @@ def enrich_build_with_ga4(
         raise DataQualityError(f"No keyword candidates for build_id {build_id}")
 
     thresholds = thresholds_from_config(config)
-    eligible_pages = sorted(
-        {
-            canonical_page_key(c["primary_observed_page"] or c["proposed_target_page"] or "")
-            for c in candidates
-            if canonical_page_key(c["primary_observed_page"] or c["proposed_target_page"] or "")
-        }
-    )
+    page_keys = [_candidate_page_key(c) for c in candidates]
+    page_key_counts = Counter(key for key in page_keys if key)
+    eligible_pages = sorted(page_key_counts)
     matched_pages = [page for page in eligible_pages if page in by_page]
     unmatched_pages = [page for page in eligible_pages if page not in by_page]
     if len(matched_pages) + len(unmatched_pages) != len(eligible_pages):
@@ -130,13 +163,20 @@ def enrich_build_with_ga4(
     updated = 0
     matched_candidates = 0
     unmatched_candidates = 0
-    for cand in candidates:
+    suppressed_homepage_candidates = 0
+    shared_page_candidates = 0
+    for cand, key in zip(candidates, page_keys):
         page = cand["primary_observed_page"] or cand["proposed_target_page"] or ""
-        key = canonical_page_key(page)
         page_type = infer_page_type(page)
+        shared = bool(key and page_key_counts[key] > 1)
+        if shared:
+            shared_page_candidates += 1
         metrics = by_page.get(key) if key else None
+        suppress_homepage = bool(key and is_homepage_page_key(key) and metrics is not None)
+
         if metrics is None:
             unmatched_candidates += 1
+            status = GA4_STATUS_UNMATCHED if key else GA4_STATUS_UNAVAILABLE
             ga4_payload = {
                 "ga4_organic_sessions": None,
                 "ga4_engaged_sessions": None,
@@ -144,7 +184,27 @@ def enrich_build_with_ga4(
                 "ga4_revenue": None,
                 "ga4_conversion_rate": None,
                 "ga4_engagement_rate": None,
-                "ga4_match_status": "unmatched" if key else "unavailable",
+                "ga4_match_status": status,
+                "ga4_match_page": key or None,
+                "ga4_shared_page": int(shared) if key else None,
+                "ga4_value_score": None,
+                "page_type": page_type,
+            }
+            sessions = engaged = purchases = None
+            revenue = None
+        elif suppress_homepage:
+            suppressed_homepage_candidates += 1
+            # Provenance only: do not copy homepage rollup into metric columns or scores.
+            ga4_payload = {
+                "ga4_organic_sessions": None,
+                "ga4_engaged_sessions": None,
+                "ga4_purchases": None,
+                "ga4_revenue": None,
+                "ga4_conversion_rate": None,
+                "ga4_engagement_rate": None,
+                "ga4_match_status": GA4_STATUS_SUPPRESSED_HOMEPAGE,
+                "ga4_match_page": key,
+                "ga4_shared_page": int(shared),
                 "ga4_value_score": None,
                 "page_type": page_type,
             }
@@ -163,7 +223,9 @@ def enrich_build_with_ga4(
                 "ga4_revenue": format(revenue, "f"),
                 "ga4_conversion_rate": conversion_rate(purchases, sessions),
                 "ga4_engagement_rate": engagement_rate(engaged, sessions),
-                "ga4_match_status": "matched",
+                "ga4_match_status": GA4_STATUS_MATCHED,
+                "ga4_match_page": key,
+                "ga4_shared_page": int(shared),
                 "page_type": page_type,
             }
 
@@ -193,12 +255,17 @@ def enrich_build_with_ga4(
             if "serper_run_id" in cand.keys() and cand["serper_run_id"]
             else False,
         )
+        status = ga4_payload["ga4_match_status"]
+        score_reasons = _score_reasons_for_status(status, scores.reasons)
         ga4_payload["ga4_value_score"] = scores.ga4_value_score
         ga4_payload["final_selection_score"] = scores.final_selection_score
         ga4_payload["business_relevance_score"] = scores.business_relevance_score
         ga4_payload["gsc_opportunity_score"] = scores.gsc_opportunity_score
         ga4_payload["evidence_confidence_score"] = scores.evidence_confidence_score
         ga4_payload["serper_validation_score"] = scores.serper_validation_score
+        ga4_payload["decision_reason"] = refresh_decision_reason(
+            cand["decision_reason"], score_reasons
+        )
         ga4_payload["updated_at"] = now
         store.update_keyword_candidate(cand["candidate_id"], ga4_payload)
         updated += 1
@@ -211,6 +278,8 @@ def enrich_build_with_ga4(
         "unmatched_page_keys": unmatched_pages,
         "matched_candidates": matched_candidates,
         "unmatched_candidates": unmatched_candidates,
+        "suppressed_homepage_candidates": suppressed_homepage_candidates,
+        "shared_page_candidates": shared_page_candidates,
         "accounting_ok": len(matched_pages) + len(unmatched_pages) == len(eligible_pages),
     }
     store.update_catalogue_build(
@@ -229,5 +298,8 @@ def enrich_build_with_ga4(
         "ga4_source_run_ids": run_ids,
         "updated_candidates": updated,
         "match_report": report,
-        "note": "Unmatched GA4 joins leave metrics NULL; candidates are never discarded.",
+        "note": (
+            "Unmatched GA4 joins leave metrics NULL; homepage joins are suppressed "
+            "from scoring (site-level rollup is not keyword evidence)."
+        ),
     }

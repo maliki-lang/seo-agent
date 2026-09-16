@@ -27,7 +27,7 @@ from ..transforms.normalize import (
     utc_now_iso,
 )
 from .builder import thresholds_from_config
-from .scoring import score_candidate
+from .scoring import refresh_decision_reason, score_candidate
 
 SearchFn = Callable[[str], Dict[str, Any]]
 SUNNYSTEP_HOSTS = {"sunnystep.com", "gosunnystep.myshopify.com"}
@@ -253,6 +253,9 @@ def validate_serp_for_build(
                     "serper_ai_overview_status": aio_status.value,
                     "serper_result_types_json": result_types,
                     "final_selection_score": scores.final_selection_score,
+                    "decision_reason": refresh_decision_reason(
+                        cand["decision_reason"], scores.reasons
+                    ),
                     "updated_at": now,
                 },
             )
