@@ -1,0 +1,22 @@
+# /etc/systemd/system/seo-tracking-daily.service
+# Approved persistent execution model: VM/server disk + SQLite + systemd.
+# Copy timer/service, set EnvironmentFile, enable timer.
+
+[Unit]
+Description=Sunnystep SEO/GEO daily tracking collect
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/seo-agent
+EnvironmentFile=-/etc/seo-tracking/tracking.env
+Environment=TRACKING_ENV=production
+# Example durable store (must exist on persistent disk):
+# TRACKING_DATABASE_URL=sqlite:////var/lib/seo-tracking/tracking.db
+ExecStart=/opt/seo-agent/ops/tracking/run-daily-persistent.sh
+User=seo-tracking
+Group=seo-tracking
+
+[Install]
+WantedBy=multi-user.target

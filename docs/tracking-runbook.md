@@ -9,6 +9,37 @@ Goal: a second person can recover tracking within 30 minutes.
 - Service accounts granted on GSC property and GA4 property
 - `python -m data_sources.tracking.cli doctor --json`
 
+## Persistent production storage (approved)
+
+GitHub Actions checkout SQLite is **ephemeral** and is not the durable database.
+
+Approved model for production history:
+
+1. **Persistent VM/server disk + SQLite + systemd** (implemented)
+   - Store DB at e.g. `sqlite:////var/lib/seo-tracking/tracking.db`
+   - Set `TRACKING_DATABASE_URL` in `/etc/seo-tracking/tracking.env`
+   - Install `ops/tracking/seo-tracking-daily.service.example` + `.timer.example`
+   - Run via `ops/tracking/run-daily-persistent.sh`
+
+2. A supported persistent database backend (future; not required for v1)
+
+Uploaded workflow artifacts must not be treated as the primary durable store.
+
+## Hosted Google credentials
+
+Prefer secret JSON env vars, never commit files:
+
+```bash
+export GSC_CREDENTIALS_JSON='...'
+export GA4_CREDENTIALS_JSON='...'
+bash ops/tracking/materialize-credentials.sh \
+  python -m data_sources.tracking.cli daily --json
+```
+
+The helper writes temp files mode `0600`, exports `GSC_CREDENTIALS_PATH` / `GA4_CREDENTIALS_PATH`, and deletes them on exit.
+
+Production `doctor` returns non-zero when required integrations/credential files are missing.
+
 ## Sample pulls
 
 ```bash
@@ -17,6 +48,22 @@ python -m data_sources.tracking.cli collect --source serper --limit 1 --json
 ```
 
 Do not run full AI visibility (120 calls) without keys and cost approval.
+
+## Catalogue provenance (Phases 6–9)
+
+```bash
+python -m data_sources.tracking.cli catalogue build-keywords --json
+python -m data_sources.tracking.cli catalogue enrich-ga4 --build-id BUILD --json
+python -m data_sources.tracking.cli catalogue validate-serp --build-id BUILD --decision selected --json
+python -m data_sources.tracking.cli catalogue derive-clusters --build-id BUILD --json
+python -m data_sources.tracking.cli catalogue build-ai-questions --keyword-build-id BUILD --count 20 --json
+python -m data_sources.tracking.cli catalogue export-review --build-id BUILD --output /tmp/review.csv --json
+python -m data_sources.tracking.cli catalogue import-decisions --build-id BUILD --input /tmp/review.csv --json
+python -m data_sources.tracking.cli catalogue approve --build-id BUILD --approved-by "Ting" --json
+python -m data_sources.tracking.cli catalogue activate --build-id BUILD --confirm --json
+python -m data_sources.tracking.cli catalogue check --build-id BUILD --json
+python -m data_sources.tracking.cli catalogue report --build-id BUILD --output docs/catalogue-provenance-v1.md --json
+```
 
 ## Daily / backfill / weekly
 
@@ -46,6 +93,11 @@ python -m data_sources.tracking.cli weekly --period-end YYYY-MM-DD --publish --j
 | SchemaMismatchError | Unexpected storage/API shape | Migrate or fix parser |
 | DataQualityError | Catalogue/quality gate | Fix data; re-run checks |
 | CostLimitExceeded | Daily cap hit | Raise cap only with approval |
+| UnsupportedCapability | ChatGPT search unavailable | Do not publish GEO rates as verified |
+
+## ChatGPT search capability
+
+ChatGPT visibility must use a search-enabled request. If search is unsupported/unverified, rows are stored with `search_enabled=0` and published GEO mention/citation rates for ChatGPT/combined are blocked.
 
 ## Safe retry
 
@@ -78,5 +130,4 @@ If a process died, locks expire after `run_timeout_seconds`. Confirm no active r
 
 - Tracking owner (engineering)
 - Analytics owner (GSC/GA4 access)
-- Lark Base admin (table/app token)
-- Brand/SEO owner (catalogue and report sign-off)
+- Marketing owner (catalogue approval / activation)

@@ -80,20 +80,57 @@ class TrackingRunner:
         self._simulate_failure = ""
         self.alert_service = AlertService(config, self.store)
 
-    def doctor(self) -> Dict[str, object]:
+    def doctor(self, *, command: str = "doctor") -> Dict[str, object]:
+        from pathlib import Path
+
         applied = self.store.migrate()
+        integrations = {
+            "gsc": bool(self.config.gsc_property and self.config.gsc_credentials_path),
+            "ga4": bool(self.config.ga4_property_id and self.config.ga4_credentials_path),
+            "serper": bool(self.config.serper_api_key),
+            "openai": bool(self.config.openai_api_key),
+            "perplexity": bool(self.config.perplexity_api_key),
+            "lark": bool(self.config.lark_base_app_token),
+        }
+        issues: List[str] = []
+        warnings: List[str] = []
+        for label, path_value in (
+            ("gsc_credentials_path", self.config.gsc_credentials_path),
+            ("ga4_credentials_path", self.config.ga4_credentials_path),
+        ):
+            if path_value and not Path(path_value).expanduser().exists():
+                issues.append(f"{label} does not exist: {path_value}")
+        if self.config.env == "production":
+            required = {
+                "daily": ["gsc", "ga4", "serper"],
+                "weekly": ["lark"],
+                "collect": [],
+                "doctor": ["gsc", "ga4"],
+            }.get(command, ["gsc", "ga4"])
+            for key in required:
+                if key in integrations and not integrations[key]:
+                    issues.append(f"production requires {key} integration for command={command}")
+            # Ephemeral GitHub runner SQLite is not an approved durable production store.
+            storage = str(self.store.path)
+            if "/home/runner" in storage or storage.startswith("/tmp"):
+                issues.append(
+                    "production storage path looks ephemeral; use persistent VM disk SQLite or approved DB backend"
+                )
+            elif self.config.storage_url.startswith("sqlite:///data/"):
+                warnings.append(
+                    "production SQLite must live on persistent disk (systemd host). "
+                    "GitHub Actions artifacts are not the durable database."
+                )
+        ok = not issues
         return {
+            "ok": ok,
             "config": self.config.public_dict(),
             "migrations_applied": applied,
             "storage_path": str(self.store.path),
-            "integrations": {
-                "gsc": bool(self.config.gsc_property and self.config.gsc_credentials_path),
-                "ga4": bool(self.config.ga4_property_id and self.config.ga4_credentials_path),
-                "serper": bool(self.config.serper_api_key),
-                "openai": bool(self.config.openai_api_key),
-                "perplexity": bool(self.config.perplexity_api_key),
-                "lark": bool(self.config.lark_base_app_token),
-            },
+            "integrations": integrations,
+            "issues": issues,
+            "warnings": warnings,
+            "command": command,
         }
 
     def start_run(

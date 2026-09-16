@@ -1,0 +1,12 @@
+# /etc/systemd/system/seo-tracking-daily.timer
+
+[Unit]
+Description=Run Sunnystep SEO/GEO daily tracking at 06:30 Asia/Singapore
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+Persistent=true
+Unit=seo-tracking-daily.service
+
+[Install]
+WantedBy=timers.target

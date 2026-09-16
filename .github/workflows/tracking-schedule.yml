@@ -1,14 +1,13 @@
 name: tracking-schedule
 
-# Unattended cloud schedule independent of a laptop.
+# Optional CI probe / manual dispatch.
+# Approved durable production history is persistent VM disk + systemd (see ops/tracking/).
+# GitHub Actions checkout SQLite is ephemeral and MUST NOT be treated as the primary database.
 on:
-  schedule:
-    - cron: "30 22 * * *"   # daily ~06:30 SGT
-    - cron: "0 0 * * 1"     # weekly Monday ~08:00 SGT
   workflow_dispatch:
     inputs:
       job:
-        description: "daily or weekly"
+        description: "daily or weekly (probe only unless durable store configured)"
         required: true
         default: daily
         type: choice
@@ -18,9 +17,7 @@ on:
 
 jobs:
   daily:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.job == 'daily') ||
-      (github.event_name == 'schedule' && github.event.schedule == '30 22 * * *')
+    if: github.event.inputs.job == 'daily'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,27 +29,37 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r data_sources/requirements.txt
           pip install -r requirements-dev.txt
-      - name: Doctor
+      - name: Materialize Google credentials and doctor
         env:
           TRACKING_ENV: production
-        run: python -m data_sources.tracking.cli doctor --json
-      - name: Daily collect
-        env:
-          TRACKING_ENV: production
-          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           GSC_PROPERTY: ${{ secrets.GSC_PROPERTY }}
-          GSC_CREDENTIALS_PATH: ${{ secrets.GSC_CREDENTIALS_PATH }}
           GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
-          GA4_CREDENTIALS_PATH: ${{ secrets.GA4_CREDENTIALS_PATH }}
+          GSC_CREDENTIALS_JSON: ${{ secrets.GSC_CREDENTIALS_JSON }}
+          GA4_CREDENTIALS_JSON: ${{ secrets.GA4_CREDENTIALS_JSON }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          # Probe mode uses a workspace sqlite path and must not be treated as durable history.
+          TRACKING_DATABASE_URL: sqlite:///data/tracking-ci-probe.db
+        run: |
+          bash ops/tracking/materialize-credentials.sh \
+            python -m data_sources.tracking.cli doctor --json
+      - name: Daily collect (probe only)
+        env:
+          TRACKING_ENV: production
+          GSC_PROPERTY: ${{ secrets.GSC_PROPERTY }}
+          GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
+          GSC_CREDENTIALS_JSON: ${{ secrets.GSC_CREDENTIALS_JSON }}
+          GA4_CREDENTIALS_JSON: ${{ secrets.GA4_CREDENTIALS_JSON }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
           LARK_ALERT_WEBHOOK_URL: ${{ secrets.LARK_ALERT_WEBHOOK_URL }}
-        run: python -m data_sources.tracking.cli daily --json
+          TRACKING_DATABASE_URL: sqlite:///data/tracking-ci-probe.db
+        run: |
+          bash ops/tracking/materialize-credentials.sh \
+            python -m data_sources.tracking.cli daily --json
 
   weekly:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.job == 'weekly') ||
-      (github.event_name == 'schedule' && github.event.schedule == '0 0 * * 1')
+    if: github.event.inputs.job == 'weekly'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +71,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r data_sources/requirements.txt
           pip install -r requirements-dev.txt
-      - name: Weekly report (no publish unless TRACKING_WEEKLY_PUBLISH secret is true)
+      - name: Weekly report probe
         env:
           TRACKING_ENV: production
           TRACKING_WEEKLY_PUBLISH: ${{ secrets.TRACKING_WEEKLY_PUBLISH }}
@@ -74,4 +81,5 @@ jobs:
           LARK_WEEKLY_TABLE_ID: ${{ secrets.LARK_WEEKLY_TABLE_ID }}
           LARK_OPPORTUNITIES_TABLE_ID: ${{ secrets.LARK_OPPORTUNITIES_TABLE_ID }}
           LARK_ALERT_WEBHOOK_URL: ${{ secrets.LARK_ALERT_WEBHOOK_URL }}
+          TRACKING_DATABASE_URL: sqlite:///data/tracking-ci-probe.db
         run: bash ops/tracking/run-weekly.sh
