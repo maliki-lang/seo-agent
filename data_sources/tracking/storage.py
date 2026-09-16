@@ -885,13 +885,47 @@ class TrackingStore:
             "reviewed_by",
             "reviewed_at",
             "updated_at",
+            "methodology_version",
+            "routing_bucket",
+            "brand_status",
+            "brand_match_type",
+            "brand_confidence",
+            "competitor_status",
+            "competitor_name",
+            "search_intent",
+            "strategic_lane",
+            "business_relevance_status",
+            "business_relevance_reason",
+            "claims_review_required",
+            "family_id",
+            "family_role",
+            "family_method",
+            "family_confidence",
+            "target_page_status",
+            "target_page_confidence",
+            "intent_fit_score",
+            "target_actionability_score",
+            "serp_opportunity_score",
+            "incremental_coverage_score",
+            "duplicate_penalty",
+            "selection_score_v2",
+            "selection_rank_within_lane",
+            "eligibility_status",
+            "eligibility_reasons_json",
+            "selection_reasons_json",
+            "alternate_rank",
         }
         assignments = []
         values: List[Any] = []
         for key, value in fields.items():
             if key not in allowed:
                 raise SchemaMismatchError(f"Unsupported keyword_candidate field: {key}")
-            if key in {"serper_top_10_domains", "serper_result_types_json"} and value is not None:
+            if key in {
+                "serper_top_10_domains",
+                "serper_result_types_json",
+                "eligibility_reasons_json",
+                "selection_reasons_json",
+            } and value is not None:
                 value = json.dumps(value, sort_keys=True)
             assignments.append(f"{key} = ?")
             values.append(value)
@@ -920,6 +954,13 @@ class TrackingStore:
             "approved_at",
             "activated_at",
             "parent_build_id",
+            "selection_policy_version",
+            "selection_policy_json",
+            "routing_report_json",
+            "family_report_json",
+            "preselection_report_json",
+            "portfolio_report_json",
+            "quality_exceptions_json",
         }
         json_fields = {
             "gsc_source_run_ids",
@@ -928,6 +969,12 @@ class TrackingStore:
             "ga4_match_report_json",
             "serper_validation_report_json",
             "funnel_json",
+            "selection_policy_json",
+            "routing_report_json",
+            "family_report_json",
+            "preselection_report_json",
+            "portfolio_report_json",
+            "quality_exceptions_json",
         }
         assignments = []
         values: List[Any] = []

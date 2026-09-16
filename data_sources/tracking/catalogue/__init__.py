@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Dict
 
 METHODOLOGY_VERSION = "catalogue_gsc_v1"
+SELECTION_METHODOLOGY_V2 = "catalogue_selection_v2"
 PROVISIONAL_CATALOGUE_VERSION = "candidate-v0.1"
+CLASSIFIER_VERSION = "catalogue_classifier_v1"
 
 PROVISIONAL_CATALOGUE_META: Dict[str, str] = {
     "catalogue_version": PROVISIONAL_CATALOGUE_VERSION,

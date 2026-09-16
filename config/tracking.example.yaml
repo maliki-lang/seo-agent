@@ -30,8 +30,103 @@ tracking:
   openai_visibility_model: gpt-4.1-mini
   perplexity_visibility_model: sonar
   catalogue:
+    # catalogue_gsc_v1 = provenance shortlist; catalogue_selection_v2 = Phase 10+ selection policy.
+    methodology_version: catalogue_gsc_v1
+    selection_policy_version: selection_policy_v2
     min_impressions: 10
     min_clicks_protect: 1
     selected_limit: 55
-    # Empty list uses built-in comfort-footwear relevance terms.
+    alternate_limit: 15
+    serper_preselection_limit: 100
+    relevance:
+      product_terms:
+        - shoe
+        - shoes
+        - sneaker
+        - sneakers
+        - sandal
+        - sandals
+        - loafer
+        - loafers
+        - mule
+        - mules
+        - slipper
+        - slippers
+        - flat
+        - flats
+      need_terms:
+        - comfort
+        - comfortable
+        - walking
+        - standing
+        - arch support
+        - wide feet
+        - cushioning
+        - arch
+        - plantar
+        - orthotic
+        - cushion
+        - heel
+        - wide
+        - foot
+        - feet
+      commercial_terms:
+        - buy
+        - shop
+        - store
+        - best
+        - recommended
+        - near me
+      location_terms:
+        - singapore
+        - sg
+      prohibited_location_only: true
+      claims_terms:
+        - plantar fasciitis
+        - orthotic
+        - pain relief
+        - medical
+        - injury
+        - bunion
+        - pain
+    brand:
+      # Exact branded terms remain in config/brand_terms.txt.
+      ambiguous_phrases:
+        - sunny shoes
+        - sunny feet
+        - sunny feet shoes
+        - sunny shoe
+      approved_typos: []
+    family_rules:
+      singular_plural: true
+      shop_store_equivalence: true
+      safe_word_order_equivalence: true
+      fuzzy_brand_routing: true
+      minimum_confidence_for_auto_family: 0.90
+    lane_quotas:
+      need_state: 15
+      product_category: 12
+      use_case_audience: 8
+      local_store: 8
+      commercial_discovery: 5
+      competitor_discovery: 4
+      strategic_gap: 3
+    lane_caps:
+      competitor_discovery: 4
+      local_store: 8
+      broad_head_term: 4
+    score_weights:
+      intent_fit: 0.25
+      product_need_relevance: 0.20
+      target_actionability: 0.15
+      gsc_opportunity: 0.15
+      serp_feasibility: 0.10
+      incremental_coverage: 0.10
+      evidence_confidence: 0.05
+    penalties:
+      duplicate_non_primary: 1.00
+      ambiguous_brand: 1.00
+      competitor_without_strategy: 0.25
+      unresolved_target_page: 0.15
+    # Legacy flat list ignored when relevance: is present.
     relevance_terms: []

@@ -42,3 +42,32 @@ competitors:
       - shoeco
     domains:
       - theshoeco.com.sg
+  - name: Birkenstock
+    aliases:
+      - birkenstock
+    domains:
+      - birkenstock.com
+      - birkenstock.com.sg
+  - name: Scholl
+    aliases:
+      - scholl
+      - scholl shoes
+    domains:
+      - scholl.com
+      - scholl.com.sg
+  - name: "On"
+    aliases:
+      - on shoes
+      - on cloud
+      - on cloud shoes
+      - on running
+    domains:
+      - on.com
+      - on-running.com
+  - name: Vivo
+    aliases:
+      - vivo shoes
+      - vivobarefoot
+      - vivo barefoot
+    domains:
+      - vivobarefoot.com
