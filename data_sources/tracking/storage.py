@@ -885,13 +885,50 @@ class TrackingStore:
             "reviewed_by",
             "reviewed_at",
             "updated_at",
+            "methodology_version",
+            "routing_bucket",
+            "brand_status",
+            "brand_match_type",
+            "brand_confidence",
+            "competitor_status",
+            "competitor_name",
+            "search_intent",
+            "strategic_lane",
+            "business_relevance_status",
+            "business_relevance_reason",
+            "claims_review_required",
+            "family_id",
+            "family_role",
+            "family_method",
+            "family_confidence",
+            "target_page_status",
+            "target_page_confidence",
+            "intent_fit_score",
+            "target_actionability_score",
+            "serp_opportunity_score",
+            "incremental_coverage_score",
+            "duplicate_penalty",
+            "selection_score_v2",
+            "selection_rank_within_lane",
+            "eligibility_status",
+            "eligibility_reasons_json",
+            "selection_reasons_json",
+            "alternate_rank",
+            "proposed_action",
+            "ga4_confidence_multiplier",
+            "multi_page_class",
         }
         assignments = []
         values: List[Any] = []
         for key, value in fields.items():
             if key not in allowed:
                 raise SchemaMismatchError(f"Unsupported keyword_candidate field: {key}")
-            if key in {"serper_top_10_domains", "serper_result_types_json"} and value is not None:
+            if key in {
+                "serper_top_10_domains",
+                "serper_result_types_json",
+                "eligibility_reasons_json",
+                "selection_reasons_json",
+            } and value is not None:
                 value = json.dumps(value, sort_keys=True)
             assignments.append(f"{key} = ?")
             values.append(value)
@@ -920,6 +957,13 @@ class TrackingStore:
             "approved_at",
             "activated_at",
             "parent_build_id",
+            "selection_policy_version",
+            "selection_policy_json",
+            "routing_report_json",
+            "family_report_json",
+            "preselection_report_json",
+            "portfolio_report_json",
+            "quality_exceptions_json",
         }
         json_fields = {
             "gsc_source_run_ids",
@@ -928,6 +972,12 @@ class TrackingStore:
             "ga4_match_report_json",
             "serper_validation_report_json",
             "funnel_json",
+            "selection_policy_json",
+            "routing_report_json",
+            "family_report_json",
+            "preselection_report_json",
+            "portfolio_report_json",
+            "quality_exceptions_json",
         }
         assignments = []
         values: List[Any] = []
@@ -967,11 +1017,61 @@ class TrackingStore:
             "ai_question_candidates",
             "ai_question_sources",
             "catalogue_comparisons",
+            "keyword_families",
         }:
             raise SchemaMismatchError(f"Unknown table {table}")
         with self.connection() as conn:
             row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
             return int(row["n"])
+
+    def delete_keyword_families_for_build(self, build_id: str) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM keyword_families WHERE build_id = ?", (build_id,))
+
+    def insert_keyword_families(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        values = []
+        for row in rows:
+            values.append(
+                (
+                    row["family_id"],
+                    row["build_id"],
+                    row["family_key"],
+                    row["family_label"],
+                    row.get("primary_candidate_id"),
+                    row.get("routing_bucket"),
+                    row.get("search_intent"),
+                    row.get("strategic_lane"),
+                    json.dumps(row.get("member_candidate_ids_json") or [], sort_keys=True),
+                    int(row.get("member_count") or 0),
+                    int(row.get("family_gsc_clicks") or 0),
+                    int(row.get("family_gsc_impressions") or 0),
+                    row.get("family_weighted_ctr"),
+                    row.get("family_weighted_position"),
+                    row.get("primary_target_page"),
+                    row["family_method"],
+                    row.get("family_confidence"),
+                    row.get("approval_status") or "draft",
+                    row.get("reviewed_by"),
+                    row.get("reviewed_at"),
+                    row["created_at"],
+                    row["updated_at"],
+                )
+            )
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO keyword_families(
+                    family_id, build_id, family_key, family_label, primary_candidate_id,
+                    routing_bucket, search_intent, strategic_lane, member_candidate_ids_json,
+                    member_count, family_gsc_clicks, family_gsc_impressions, family_weighted_ctr,
+                    family_weighted_position, primary_target_page, family_method, family_confidence,
+                    approval_status, reviewed_by, reviewed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
 
     def insert_catalogue_cluster(self, row: Dict[str, Any]) -> None:
         with self.connection() as conn:

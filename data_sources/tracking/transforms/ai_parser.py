@@ -66,7 +66,16 @@ def cites_sunnystep(urls: Sequence[str]) -> bool:
 
 def load_competitor_aliases(path: Path) -> List[Dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return list(data.get("competitors") or [])
+    rows: List[Dict[str, Any]] = []
+    for row in list(data.get("competitors") or []):
+        if not isinstance(row, dict):
+            continue
+        # YAML may coerce names like On/Yes into bools; force strings.
+        name = str(row.get("name") or "").strip()
+        aliases = [str(a).strip() for a in (row.get("aliases") or []) if str(a).strip()]
+        domains = [str(d).strip() for d in (row.get("domains") or []) if str(d).strip()]
+        rows.append({"name": name, "aliases": aliases, "domains": domains})
+    return rows
 
 
 def named_competitors(text: str, catalogue: Sequence[Dict[str, Any]]) -> List[str]:

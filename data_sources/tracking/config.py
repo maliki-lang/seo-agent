@@ -102,7 +102,11 @@ class TrackingConfig:
     catalogue_min_impressions: int = 10
     catalogue_min_clicks_protect: int = 1
     catalogue_selected_limit: int = 55
+    catalogue_alternate_limit: int = 15
+    catalogue_serper_preselection_limit: int = 100
+    catalogue_methodology_version: str = "catalogue_gsc_v1"
     catalogue_relevance_terms: List[str] = field(default_factory=list)
+    catalogue_selection_policy: Any = None
 
     @property
     def sqlite_path(self) -> Path:
@@ -191,6 +195,13 @@ def load_config(path: Optional[str] = None) -> TrackingConfig:
     relevance_terms = catalogue_raw.get("relevance_terms") or []
     if not isinstance(relevance_terms, list):
         raise ConfigurationError("catalogue.relevance_terms must be a list")
+    from .catalogue.policy import policy_from_catalogue_raw
+
+    selection_policy = policy_from_catalogue_raw(catalogue_raw)
+    # Prefer structured policy flat terms; fall back to legacy list for v1 builders.
+    flat_terms = list(selection_policy.flat_relevance_terms())
+    if relevance_terms and not (catalogue_raw.get("relevance") or {}):
+        flat_terms = [str(t).strip().lower() for t in relevance_terms if str(t).strip()]
     return TrackingConfig(
         env=os.getenv("TRACKING_ENV", raw.get("env", "development")),
         timezone=os.getenv("TRACKING_TIMEZONE", raw.get("timezone", "Asia/Singapore")),
@@ -249,8 +260,12 @@ def load_config(path: Optional[str] = None) -> TrackingConfig:
         shopify_access_token=os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
         shopify_api_version=os.getenv("SHOPIFY_API_VERSION", "2026-01"),
         config_path=str(config_path),
-        catalogue_min_impressions=_as_int(catalogue_raw.get("min_impressions"), 10),
-        catalogue_min_clicks_protect=_as_int(catalogue_raw.get("min_clicks_protect"), 1),
-        catalogue_selected_limit=_as_int(catalogue_raw.get("selected_limit"), 55),
-        catalogue_relevance_terms=[str(t).strip().lower() for t in relevance_terms if str(t).strip()],
+        catalogue_min_impressions=selection_policy.min_impressions,
+        catalogue_min_clicks_protect=selection_policy.min_clicks_protect,
+        catalogue_selected_limit=selection_policy.selected_limit,
+        catalogue_alternate_limit=selection_policy.alternate_limit,
+        catalogue_serper_preselection_limit=selection_policy.serper_preselection_limit,
+        catalogue_methodology_version=selection_policy.methodology_version,
+        catalogue_relevance_terms=flat_terms,
+        catalogue_selection_policy=selection_policy,
     )

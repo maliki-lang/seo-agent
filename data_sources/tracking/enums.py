@@ -115,6 +115,103 @@ class TransformationMethod(str, Enum):
 class BrandStatus(str, Enum):
     BRANDED = "branded"
     NON_BRANDED = "non_branded"
+    AMBIGUOUS_BRAND = "ambiguous_brand"
+
+
+class BrandMatchType(str, Enum):
+    EXACT_CONFIGURED_TERM = "exact_configured_term"
+    APPROVED_ALIAS = "approved_alias"
+    APPROVED_TYPO = "approved_typo"
+    FUZZY_SUSPECT = "fuzzy_suspect"
+    NO_MATCH = "no_match"
+
+
+class RoutingBucket(str, Enum):
+    NONBRAND_DISCOVERY = "nonbrand_discovery"
+    BRANDED_BENCHMARK = "branded_benchmark"
+    COMPETITOR_BENCHMARK = "competitor_benchmark"
+    LOCAL_STORE = "local_store"
+    AMBIGUOUS_BRAND = "ambiguous_brand"
+    IRRELEVANT = "irrelevant"
+    MANUAL_REVIEW = "manual_review"
+
+
+class CompetitorStatus(str, Enum):
+    NONE = "none"
+    EXPLICIT = "explicit"
+    AMBIGUOUS = "ambiguous"
+
+
+class SearchIntent(str, Enum):
+    NAVIGATIONAL_BRAND = "navigational_brand"
+    NAVIGATIONAL_COMPETITOR = "navigational_competitor"
+    LOCAL_STORE = "local_store"
+    TRANSACTIONAL_CATEGORY = "transactional_category"
+    COMMERCIAL_INVESTIGATION = "commercial_investigation"
+    PROBLEM_SOLUTION = "problem_solution"
+    INFORMATIONAL = "informational"
+    CAMPAIGN_EVENT = "campaign_event"
+    AMBIGUOUS = "ambiguous"
+
+
+class StrategicLane(str, Enum):
+    NEED_STATE = "need_state"
+    PRODUCT_CATEGORY = "product_category"
+    USE_CASE_AUDIENCE = "use_case_audience"
+    LOCAL_STORE = "local_store"
+    COMMERCIAL_DISCOVERY = "commercial_discovery"
+    COMPETITOR_DISCOVERY = "competitor_discovery"
+    STRATEGIC_GAP = "strategic_gap"
+    INFORMATIONAL_EDITORIAL = "informational_editorial"
+
+
+class EligibilityStatus(str, Enum):
+    ELIGIBLE = "eligible"
+    ELIGIBLE_WITH_REVIEW = "eligible_with_review"
+    INELIGIBLE_BRAND = "ineligible_brand"
+    INELIGIBLE_DUPLICATE_VARIANT = "ineligible_duplicate_variant"
+    INELIGIBLE_IRRELEVANT = "ineligible_irrelevant"
+    INELIGIBLE_UNSUPPORTED_CLAIM = "ineligible_unsupported_claim"
+    INELIGIBLE_NO_ACTIONABLE_TARGET = "ineligible_no_actionable_target"
+    PENDING_CLASSIFICATION = "pending_classification"
+
+
+class BusinessRelevanceStatus(str, Enum):
+    RELEVANT = "relevant"
+    IRRELEVANT = "irrelevant"
+    LOCATION_ONLY = "location_only"
+    PENDING_REVIEW = "pending_review"
+
+
+class TargetPageStatus(str, Enum):
+    OBSERVED_PAGE_SUITABLE = "observed_page_suitable"
+    OBSERVED_PAGE_NEEDS_OPTIMIZATION = "observed_page_needs_optimization"
+    MULTIPLE_PAGES_COMPETING = "multiple_pages_competing"
+    APPROVED_NEW_PAGE = "approved_new_page"
+    HOMEPAGE_UNRESOLVED = "homepage_unresolved"
+    NO_SENSIBLE_TARGET = "no_sensible_target"
+    MANUAL_REVIEW = "manual_review"
+
+
+class ProposedAction(str, Enum):
+    OPTIMIZE_EXISTING = "optimize_existing"
+    CONSOLIDATE_COMPETING_PAGES = "consolidate_competing_pages"
+    CREATE_NEW_PAGE = "create_new_page"
+    PROTECT_EXISTING = "protect_existing"
+    MONITOR_ONLY = "monitor_only"
+    NO_ACTION = "no_action"
+
+
+class MultiPageClass(str, Enum):
+    CANNIBALIZATION_CANDIDATE = "cannibalization_candidate"
+    INTENT_SPLIT = "intent_split"
+    NORMAL_PAGE_VARIATION = "normal_page_variation"
+    UNRESOLVED = "unresolved"
+
+
+class FamilyRole(str, Enum):
+    PRIMARY = "primary"
+    VARIANT = "variant"
 
 
 class CollectorStatus(str, Enum):

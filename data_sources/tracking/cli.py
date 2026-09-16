@@ -225,6 +225,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lineage.add_argument("--candidate-id", required=True)
     lineage.set_defaults(handler="catalogue_lineage")
+
+    classify = catalogue_sub.add_parser(
+        "classify",
+        parents=[shared],
+        help="Apply Phase 10 routing/intent/relevance classification to a keyword build",
+    )
+    classify.add_argument("--build-id", required=True)
+    classify.add_argument(
+        "--keep-selected",
+        action="store_true",
+        help="Do not demote ineligible selected rows to pending",
+    )
+    classify.set_defaults(handler="catalogue_classify")
+
+    derive_families = catalogue_sub.add_parser(
+        "derive-families",
+        parents=[shared],
+        help="Derive conservative keyword families and mark family primaries",
+    )
+    derive_families.add_argument("--build-id", required=True)
+    derive_families.add_argument(
+        "--skip-targets",
+        action="store_true",
+        help="Do not refresh target-page actionability before family primary selection",
+    )
+    derive_families.set_defaults(handler="catalogue_derive_families")
+
+    eval_targets = catalogue_sub.add_parser(
+        "evaluate-targets",
+        parents=[shared],
+        help="Evaluate target-page actionability and shared GA4 confidence multipliers",
+    )
+    eval_targets.add_argument("--build-id", required=True)
+    eval_targets.add_argument(
+        "--skip-ga4-discount",
+        action="store_true",
+        help="Skip shared-page GA4 confidence multiplier assignment",
+    )
+    eval_targets.set_defaults(handler="catalogue_evaluate_targets")
     return parser
 
 
@@ -321,6 +360,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0 if payload.get("status") != "failed" else 2
         if args.command == "catalogue":
             from .catalogue.builder import build_keyword_catalogue, get_candidate_lineage
+            from .catalogue.classify import classify_build
+            from .catalogue.families import derive_families_for_build
+            from .catalogue.target_pages import evaluate_targets_for_build
             from .catalogue.clusters import derive_clusters
             from .catalogue.compare import compare_with_provisional
             from .catalogue.enrich import enrich_build_with_ga4
@@ -345,6 +387,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     ga4_end=parse_date(args.ga4_end_date) if args.ga4_end_date else None,
                     status=args.status,
                     created_by=args.created_by,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "classify":
+                payload = classify_build(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    demote_ineligible_selected=not bool(args.keep_selected),
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "derive-families":
+                payload = derive_families_for_build(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    refresh_targets=not bool(args.skip_targets),
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "evaluate-targets":
+                payload = evaluate_targets_for_build(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    apply_ga4_discount=not bool(args.skip_ga4_discount),
                 )
                 _print(payload, as_json)
                 return 0
