@@ -1,0 +1,44 @@
+competitors:
+  - name: Anothersole
+    aliases:
+      - anothersole
+      - another sole
+    domains:
+      - sg.anothersole.com
+      - anothersole.com
+  - name: Lucca Vudor
+    aliases:
+      - lucca vudor
+      - luccavudor
+    domains:
+      - luccavudor.com
+  - name: DMK
+    aliases:
+      - dmk
+      - dmk shoes
+    domains:
+      - dmk.com.sg
+  - name: Pretty Fit
+    aliases:
+      - prettyfit
+      - pretty fit
+    domains:
+      - prettyfit.com.sg
+  - name: Comfort Co
+    aliases:
+      - comfort co
+      - comfortco
+    domains:
+      - comfortco.sg
+  - name: Skechers
+    aliases:
+      - skechers
+    domains:
+      - skechers.com.sg
+      - skechers.com
+  - name: The Shoe Co
+    aliases:
+      - the shoe co
+      - shoeco
+    domains:
+      - theshoeco.com.sg

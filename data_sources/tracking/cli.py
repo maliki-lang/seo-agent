@@ -51,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--source", required=True)
     collect.add_argument("--as-of-date")
     collect.add_argument("--dry-run", action="store_true")
+    collect.add_argument("--limit", type=int, default=0, help="Limit keywords or questions for a sample pull")
     collect.set_defaults(handler="collect")
 
     daily = sub.add_parser("daily", parents=[shared], help="Run daily collection")
@@ -107,7 +108,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     as_json,
                 )
                 return 0
-            payload = runner.collect_source(args.source, as_of, dry_run=False)
+            payload = runner.collect_source(args.source, as_of, dry_run=False, limit=args.limit)
             _print(payload, as_json)
             return 0 if payload["status"] != "failed" else 2
         if args.command == "daily":

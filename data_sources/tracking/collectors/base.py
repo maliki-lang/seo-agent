@@ -17,6 +17,7 @@ class CollectorResult:
     raw_record_ids: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     capability: Optional[str] = None
+    raw_payloads: List[Any] = field(default_factory=list)
 
 
 class Collector(ABC):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import uuid
 from datetime import date
@@ -12,20 +13,27 @@ from .checks.reconciliation import (
     stored_ga4_sessions,
     stored_gsc_totals,
 )
+from .collectors.ai_visibility import AiVisibilityCollector
 from .collectors.base import CollectorResult
 from .collectors.ga4 import Ga4Collector, ga4_latest_available_date
 from .collectors.gsc import GscCollector, gsc_latest_available_date
+from .collectors.serper import SerperCollector
 from .config import TrackingConfig
 from .costs import CostLedger
-from .enums import CheckStatus, CollectorStatus, RunStatus, RunType, Source
+from .enums import CollectorStatus, RunStatus, RunType, Source
 from .exceptions import TrackingError
 from .logging import StructuredLogger
-from .models import Ga4DailyRow, GscDailyRow, QualityCheckRow, RunLog, UpsertStats
+from .models import QualityCheckRow, RunLog, UpsertStats
 from .storage import TrackingStore
 from .transforms.metrics import date_chunks
-from .transforms.normalize import utc_now_iso
+from .transforms.normalize import sha256_hex, utc_now_iso
 
-IMPLEMENTED_COLLECTORS = {Source.GSC.value, Source.GA4.value}
+IMPLEMENTED_COLLECTORS = {
+    Source.GSC.value,
+    Source.GA4.value,
+    Source.SERPER.value,
+    Source.AI_VISIBILITY.value,
+}
 COLLECTOR_ORDER = [Source.GSC.value, Source.GA4.value, Source.SERPER.value, Source.AI_VISIBILITY.value]
 
 
@@ -52,6 +60,8 @@ class TrackingRunner:
         collectors: Optional[Dict[str, Callable]] = None,
         gsc_collector: Optional[GscCollector] = None,
         ga4_collector: Optional[Ga4Collector] = None,
+        serper_collector: Optional[SerperCollector] = None,
+        ai_collector: Optional[AiVisibilityCollector] = None,
     ):
         self.config = config
         self.store = store or TrackingStore(config)
@@ -60,6 +70,8 @@ class TrackingRunner:
         self.costs = CostLedger(config.daily_cost_cap_usd)
         self.gsc_collector = gsc_collector
         self.ga4_collector = ga4_collector
+        self.serper_collector = serper_collector
+        self.ai_collector = ai_collector
 
     def doctor(self) -> Dict[str, object]:
         applied = self.store.migrate()
@@ -160,11 +172,49 @@ class TrackingRunner:
     def _ga4(self) -> Ga4Collector:
         return self.ga4_collector or Ga4Collector(self.config)
 
+    def _serper(self, keyword_limit: int = 0) -> SerperCollector:
+        if self.serper_collector is not None:
+            return self.serper_collector
+        return SerperCollector(self.config, cost_ledger=self.costs, keyword_limit=keyword_limit)
+
+    def _ai(self, question_limit: int = 0) -> AiVisibilityCollector:
+        if self.ai_collector is not None:
+            return self.ai_collector
+        return AiVisibilityCollector(self.config, cost_ledger=self.costs, question_limit=question_limit)
+
+    def _collector(self, source: str, limit: int = 0):
+        if source == Source.GSC.value:
+            return self._gsc()
+        if source == Source.GA4.value:
+            return self._ga4()
+        if source == Source.SERPER.value:
+            return self._serper(keyword_limit=limit)
+        if source == Source.AI_VISIBILITY.value:
+            return self._ai(question_limit=limit)
+        raise TrackingError(f"No collector for source {source}")
+
     def persist_collector_result(self, source: str, result: CollectorResult) -> UpsertStats:
+        for raw in result.raw_payloads:
+            payload_json = json.dumps(raw.get("payload"), default=str, sort_keys=True)
+            self.store.insert_raw_record(
+                raw_record_id=raw["raw_record_id"],
+                run_id=result.rows[0].run_id if result.rows else "",
+                source=source,
+                endpoint_or_operation=raw.get("endpoint_or_operation") or source,
+                request_fingerprint=sha256_hex(payload_json)[:32],
+                payload_json=payload_json,
+                content_type="application/json",
+                retention_class="raw-api",
+                checksum=sha256_hex(payload_json),
+            )
         if source == Source.GSC.value:
             return self.store.upsert_gsc(list(result.rows))
         if source == Source.GA4.value:
             return self.store.upsert_ga4(list(result.rows))
+        if source == Source.SERPER.value:
+            return self.store.upsert_serp(list(result.rows))
+        if source == Source.AI_VISIBILITY.value:
+            return self.store.upsert_ai_answers(list(result.rows))
         raise TrackingError(f"No persistence path for source {source}")
 
     def _record_check(self, run_id: str, result) -> None:
@@ -223,6 +273,7 @@ class TrackingRunner:
         end: date,
         *,
         dry_run: bool = False,
+        limit: int = 0,
     ) -> Dict[str, Any]:
         if source not in IMPLEMENTED_COLLECTORS:
             self.store.set_collector_state(
@@ -233,7 +284,7 @@ class TrackingRunner:
                 finished_at=utc_now_iso(),
             )
             return {"source": source, "status": "skipped", "reason": "not-implemented"}
-        collector = self._gsc() if source == Source.GSC.value else self._ga4()
+        collector = self._collector(source, limit=limit)
         started = utc_now_iso()
         self.store.set_collector_state(
             run.run_id, source, CollectorStatus.RUNNING, started_at=started
@@ -247,7 +298,7 @@ class TrackingRunner:
             )
             stats = UpsertStats(skipped=len(result.rows)) if dry_run else self.persist_collector_result(source, result)
             result.stats = stats
-            if not dry_run:
+            if not dry_run and source in {Source.GSC.value, Source.GA4.value}:
                 self._reconcile(run, source, start, end, collector)
             self.store.set_collector_state(
                 run.run_id,
@@ -346,6 +397,7 @@ class TrackingRunner:
         as_of: date,
         *,
         dry_run: bool = False,
+        limit: int = 0,
     ) -> Dict[str, Any]:
         run = self.start_run(RunType.MANUAL, as_of, [source])
         start = as_of
@@ -353,7 +405,7 @@ class TrackingRunner:
             start = gsc_latest_available_date(as_of, self.config.freshness.gsc_days)
         elif source == Source.GA4.value:
             start = ga4_latest_available_date(as_of, self.config.freshness.ga4_days)
-        summary = self.run_one_source(run, source, start, start, dry_run=dry_run)
+        summary = self.run_one_source(run, source, start, start, dry_run=dry_run, limit=limit)
         status = self.finalize(run)
         return {
             "run_id": run.run_id,
