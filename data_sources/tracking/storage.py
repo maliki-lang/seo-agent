@@ -708,6 +708,145 @@ class TrackingStore:
                 values,
             )
 
+    def insert_catalogue_build(self, row: Dict[str, Any]) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO catalogue_builds(
+                    build_id, build_type, status, source_window_start, source_window_end,
+                    gsc_source_run_ids, ga4_source_run_ids, serper_source_run_ids,
+                    source_fingerprint, methodology_version, created_by, created_at,
+                    approved_by, approved_at, activated_at, notes, funnel_json,
+                    ga4_window_start, ga4_window_end
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["build_id"],
+                    row["build_type"],
+                    row["status"],
+                    row["source_window_start"],
+                    row["source_window_end"],
+                    json.dumps(row.get("gsc_source_run_ids") or [], sort_keys=True),
+                    json.dumps(row.get("ga4_source_run_ids") or [], sort_keys=True),
+                    json.dumps(row.get("serper_source_run_ids") or [], sort_keys=True),
+                    row["source_fingerprint"],
+                    row["methodology_version"],
+                    row["created_by"],
+                    row["created_at"],
+                    row.get("approved_by"),
+                    row.get("approved_at"),
+                    row.get("activated_at"),
+                    row.get("notes"),
+                    json.dumps(row.get("funnel_json") or {}, sort_keys=True),
+                    row.get("ga4_window_start"),
+                    row.get("ga4_window_end"),
+                ),
+            )
+
+    def insert_keyword_candidates(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        values = []
+        for row in rows:
+            values.append(
+                (
+                    row["candidate_id"],
+                    row["build_id"],
+                    row["canonical_keyword"],
+                    row["normalized_keyword"],
+                    row["brand_status"],
+                    row["brand_rule_version"],
+                    row["primary_observed_page"],
+                    json.dumps(row.get("observed_pages_json") or [], sort_keys=True),
+                    int(row.get("multi_page_competition") or 0),
+                    int(row["source_query_count"]),
+                    int(row["source_row_count"]),
+                    int(row["source_date_count"]),
+                    int(row["gsc_clicks"]),
+                    int(row["gsc_impressions"]),
+                    row.get("gsc_weighted_ctr"),
+                    row.get("gsc_weighted_position"),
+                    row.get("ga4_organic_sessions"),
+                    row.get("ga4_engaged_sessions"),
+                    row.get("ga4_purchases"),
+                    row.get("ga4_revenue"),
+                    row.get("ga4_conversion_rate"),
+                    row.get("serper_position"),
+                    row.get("serper_ranking_url"),
+                    json.dumps(row["serper_top_10_domains"], sort_keys=True)
+                    if row.get("serper_top_10_domains") is not None
+                    else None,
+                    row.get("serper_intent"),
+                    row.get("business_relevance_score"),
+                    row.get("gsc_opportunity_score"),
+                    row.get("ga4_value_score"),
+                    row.get("serper_validation_score"),
+                    row.get("evidence_confidence_score"),
+                    row.get("final_selection_score"),
+                    row["decision"],
+                    row.get("decision_reason"),
+                    row.get("proposed_target_page"),
+                    row.get("reviewed_target_page"),
+                    row.get("reviewed_by"),
+                    row.get("reviewed_at"),
+                    row["created_at"],
+                    row["updated_at"],
+                )
+            )
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO keyword_candidates(
+                    candidate_id, build_id, canonical_keyword, normalized_keyword,
+                    brand_status, brand_rule_version, primary_observed_page, observed_pages_json,
+                    multi_page_competition, source_query_count, source_row_count, source_date_count,
+                    gsc_clicks, gsc_impressions, gsc_weighted_ctr, gsc_weighted_position,
+                    ga4_organic_sessions, ga4_engaged_sessions, ga4_purchases, ga4_revenue,
+                    ga4_conversion_rate, serper_position, serper_ranking_url, serper_top_10_domains,
+                    serper_intent, business_relevance_score, gsc_opportunity_score, ga4_value_score,
+                    serper_validation_score, evidence_confidence_score, final_selection_score,
+                    decision, decision_reason, proposed_target_page, reviewed_target_page,
+                    reviewed_by, reviewed_at, created_at, updated_at
+                ) VALUES (
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                )
+                """,
+                values,
+            )
+
+    def insert_keyword_candidate_sources(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        values = [
+            (
+                row["candidate_source_id"],
+                row["candidate_id"],
+                row["gsc_natural_key"],
+                row["gsc_run_id"],
+                row["raw_query"],
+                row["raw_page"],
+                int(row["clicks"]),
+                int(row["impressions"]),
+                float(row["ctr"]),
+                float(row["position"]),
+                row["row_date"],
+                row["transformation_method"],
+                row["created_at"],
+            )
+            for row in rows
+        ]
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO keyword_candidate_sources(
+                    candidate_source_id, candidate_id, gsc_natural_key, gsc_run_id,
+                    raw_query, raw_page, clicks, impressions, ctr, position,
+                    row_date, transformation_method, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+
     def count(self, table: str) -> int:
         if table not in {
             "gsc_daily",
@@ -723,6 +862,12 @@ class TrackingStore:
             "weekly_reports",
             "alerts",
             "raw_records",
+            "catalogue_builds",
+            "keyword_candidates",
+            "keyword_candidate_sources",
+            "catalogue_clusters",
+            "ai_question_candidates",
+            "ai_question_sources",
         }:
             raise SchemaMismatchError(f"Unknown table {table}")
         with self.connection() as conn:

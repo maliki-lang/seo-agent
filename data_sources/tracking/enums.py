@@ -85,6 +85,38 @@ class OpportunityCategory(str, Enum):
     GEO = "geo"
 
 
+class CatalogueBuildType(str, Enum):
+    KEYWORD = "keyword"
+    AI_QUESTION = "ai_question"
+
+
+class CatalogueBuildStatus(str, Enum):
+    DRAFT = "draft"
+    REVIEW = "review"
+    APPROVED = "approved"
+    ACTIVATED = "activated"
+    SUPERSEDED = "superseded"
+
+
+class CandidateDecision(str, Enum):
+    PENDING = "pending"
+    SELECTED = "selected"
+    REJECTED = "rejected"
+    DEFERRED = "deferred"
+
+
+class TransformationMethod(str, Enum):
+    EXACT = "exact"
+    NORMALIZED = "normalized"
+    MERGED_VARIANTS = "merged_variants"
+    HUMAN_REWORDED = "human_reworded"
+
+
+class BrandStatus(str, Enum):
+    BRANDED = "branded"
+    NON_BRANDED = "non_branded"
+
+
 class CollectorStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"

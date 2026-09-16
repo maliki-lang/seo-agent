@@ -10,6 +10,7 @@ from .config import REPO_ROOT, TrackingConfig
 from .exceptions import ConfigurationError, DataQualityError
 from .storage import TrackingStore
 from .transforms.normalize import natural_key, normalize_query, utc_now_iso
+from .catalogue import PROVISIONAL_CATALOGUE_VERSION
 
 
 @dataclass(frozen=True)
@@ -101,8 +102,9 @@ def sync_catalogues(store: TrackingStore, config: TrackingConfig) -> None:
         """
         INSERT INTO keyword_catalog(
             keyword_id, keyword, cluster, target_page, country, device, language,
-            active, valid_from, valid_to, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            active, valid_from, valid_to, created_at, updated_at,
+            catalogue_version, build_id, approval_status, approved_by, approved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(keyword_id) DO UPDATE SET
             keyword = excluded.keyword,
             cluster = excluded.cluster,
@@ -113,7 +115,9 @@ def sync_catalogues(store: TrackingStore, config: TrackingConfig) -> None:
             active = excluded.active,
             valid_from = excluded.valid_from,
             valid_to = excluded.valid_to,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            catalogue_version = COALESCE(keyword_catalog.catalogue_version, excluded.catalogue_version),
+            approval_status = COALESCE(keyword_catalog.approval_status, excluded.approval_status)
         """,
         [
             (
@@ -129,6 +133,11 @@ def sync_catalogues(store: TrackingStore, config: TrackingConfig) -> None:
                 row.valid_to or None,
                 now,
                 now,
+                PROVISIONAL_CATALOGUE_VERSION,
+                None,
+                "provisional",
+                None,
+                None,
             )
             for row in keywords
         ],
@@ -137,8 +146,9 @@ def sync_catalogues(store: TrackingStore, config: TrackingConfig) -> None:
         """
         INSERT INTO ai_question_catalog(
             question_id, question, cluster, target_page, locale, active,
-            valid_from, valid_to, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            valid_from, valid_to, created_at, updated_at,
+            catalogue_version, build_id, approval_status, approved_by, approved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(question_id) DO UPDATE SET
             question = excluded.question,
             cluster = excluded.cluster,
@@ -147,7 +157,9 @@ def sync_catalogues(store: TrackingStore, config: TrackingConfig) -> None:
             active = excluded.active,
             valid_from = excluded.valid_from,
             valid_to = excluded.valid_to,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            catalogue_version = COALESCE(ai_question_catalog.catalogue_version, excluded.catalogue_version),
+            approval_status = COALESCE(ai_question_catalog.approval_status, excluded.approval_status)
         """,
         [
             (
@@ -161,6 +173,11 @@ def sync_catalogues(store: TrackingStore, config: TrackingConfig) -> None:
                 row.valid_to or None,
                 now,
                 now,
+                PROVISIONAL_CATALOGUE_VERSION,
+                None,
+                "provisional",
+                None,
+                None,
             )
             for row in questions
         ],

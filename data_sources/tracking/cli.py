@@ -90,6 +90,30 @@ def build_parser() -> argparse.ArgumentParser:
     weekly.add_argument("--publish", action="store_true")
     weekly.add_argument("--no-publish", action="store_true")
     weekly.set_defaults(handler="weekly")
+
+    catalogue = sub.add_parser("catalogue", parents=[shared], help="Catalogue provenance commands")
+    catalogue_sub = catalogue.add_subparsers(dest="catalogue_command", required=True)
+
+    build_kw = catalogue_sub.add_parser(
+        "build-keywords",
+        parents=[shared],
+        help="Build GSC-derived keyword candidates from stored production rows",
+    )
+    build_kw.add_argument("--gsc-start-date", help="Inclusive GSC window start (default: 90-day complete window)")
+    build_kw.add_argument("--gsc-end-date", help="Inclusive GSC window end")
+    build_kw.add_argument("--ga4-start-date", help="Recorded for Phase 7 enrichment; not applied in Phase 6")
+    build_kw.add_argument("--ga4-end-date", help="Recorded for Phase 7 enrichment; not applied in Phase 6")
+    build_kw.add_argument("--status", default="draft", help="Build status (default: draft)")
+    build_kw.add_argument("--created-by", default="catalogue-builder")
+    build_kw.set_defaults(handler="catalogue_build_keywords")
+
+    lineage = catalogue_sub.add_parser(
+        "lineage",
+        parents=[shared],
+        help="Show stored lineage for one keyword candidate",
+    )
+    lineage.add_argument("--candidate-id", required=True)
+    lineage.set_defaults(handler="catalogue_lineage")
     return parser
 
 
@@ -181,6 +205,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             payload = runner.generate_weekly(period_end=end, publish=publish)
             _print(payload, as_json)
             return 0 if payload.get("status") != "failed" else 2
+        if args.command == "catalogue":
+            from .catalogue.builder import build_keyword_catalogue, get_candidate_lineage
+
+            if args.catalogue_command == "build-keywords":
+                payload = build_keyword_catalogue(
+                    runner.store,
+                    config,
+                    gsc_start=parse_date(args.gsc_start_date) if args.gsc_start_date else None,
+                    gsc_end=parse_date(args.gsc_end_date) if args.gsc_end_date else None,
+                    ga4_start=parse_date(args.ga4_start_date) if args.ga4_start_date else None,
+                    ga4_end=parse_date(args.ga4_end_date) if args.ga4_end_date else None,
+                    status=args.status,
+                    created_by=args.created_by,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "lineage":
+                payload = get_candidate_lineage(runner.store, args.candidate_id)
+                _print(payload, as_json)
+                return 0
+            parser.error(f"Unhandled catalogue command {args.catalogue_command}")
+            return 2
         parser.error(f"Unhandled command {args.command}")
         return 2
     except TrackingError as exc:

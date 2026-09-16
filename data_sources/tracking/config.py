@@ -99,6 +99,10 @@ class TrackingConfig:
     shopify_access_token: str = ""
     shopify_api_version: str = "2026-01"
     config_path: str = ""
+    catalogue_min_impressions: int = 10
+    catalogue_min_clicks_protect: int = 1
+    catalogue_selected_limit: int = 55
+    catalogue_relevance_terms: List[str] = field(default_factory=list)
 
     @property
     def sqlite_path(self) -> Path:
@@ -183,6 +187,10 @@ def load_config(path: Optional[str] = None) -> TrackingConfig:
     raw = _read_yaml(config_path)
     retry_raw = raw.get("retry") or {}
     freshness_raw = raw.get("freshness") or {}
+    catalogue_raw = raw.get("catalogue") or {}
+    relevance_terms = catalogue_raw.get("relevance_terms") or []
+    if not isinstance(relevance_terms, list):
+        raise ConfigurationError("catalogue.relevance_terms must be a list")
     return TrackingConfig(
         env=os.getenv("TRACKING_ENV", raw.get("env", "development")),
         timezone=os.getenv("TRACKING_TIMEZONE", raw.get("timezone", "Asia/Singapore")),
@@ -241,4 +249,8 @@ def load_config(path: Optional[str] = None) -> TrackingConfig:
         shopify_access_token=os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
         shopify_api_version=os.getenv("SHOPIFY_API_VERSION", "2026-01"),
         config_path=str(config_path),
+        catalogue_min_impressions=_as_int(catalogue_raw.get("min_impressions"), 10),
+        catalogue_min_clicks_protect=_as_int(catalogue_raw.get("min_clicks_protect"), 1),
+        catalogue_selected_limit=_as_int(catalogue_raw.get("selected_limit"), 55),
+        catalogue_relevance_terms=[str(t).strip().lower() for t in relevance_terms if str(t).strip()],
     )

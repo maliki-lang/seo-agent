@@ -92,6 +92,47 @@ def normalize_query(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip())
 
 
+_APOSTROPHE_CHARS = {
+    "\u2019": "'",  # right single quotation mark
+    "\u2018": "'",  # left single quotation mark
+    "\u02bc": "'",  # modifier letter apostrophe
+    "`": "'",
+    "´": "'",
+}
+_CATALOGUE_PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
+_CATALOGUE_SPACE = re.compile(r"\s+")
+
+
+def normalize_catalogue_query(value: str) -> str:
+    """Deterministic catalogue key: NFKC, lower, apostrophe-safe, punct→space, collapse.
+
+    Apostrophes are removed after canonicalization so approved variants such as
+    "women's" / "womens" share one reviewable normalized key. No fuzzy merge.
+    """
+    import unicodedata
+
+    text = unicodedata.normalize("NFKC", value or "")
+    text = text.lower()
+    for src, dst in _APOSTROPHE_CHARS.items():
+        text = text.replace(src, dst)
+    text = text.replace("'", "")
+    text = _CATALOGUE_PUNCT.sub(" ", text)
+    text = _CATALOGUE_SPACE.sub(" ", text).strip()
+    return text
+
+
+def catalogue_transformation_method(raw_query: str, normalized_keyword: str, *, merged: bool) -> str:
+    """Classify how a raw GSC query relates to the normalized candidate key."""
+    if merged:
+        return "merged_variants"
+    basic = normalize_query(raw_query).lower()
+    if basic == normalized_keyword:
+        return "exact"
+    if normalize_catalogue_query(raw_query) == normalized_keyword:
+        return "normalized"
+    return "normalized"
+
+
 def normalize_blank(value: str, default: str = "(not set)") -> str:
     text = (value or "").strip()
     lowered = text.lower()

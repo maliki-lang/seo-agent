@@ -29,3 +29,9 @@ tracking:
   gsc_country: sgp
   openai_visibility_model: gpt-4.1-mini
   perplexity_visibility_model: sonar
+  catalogue:
+    min_impressions: 10
+    min_clicks_protect: 1
+    selected_limit: 55
+    # Empty list uses built-in comfort-footwear relevance terms.
+    relevance_terms: []
