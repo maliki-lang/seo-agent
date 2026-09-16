@@ -1,0 +1,16 @@
+[Unit]
+Description=Sunnystep SEO/GEO tracking daily collection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/seo-agent
+EnvironmentFile=-/etc/seo-agent/tracking.env
+ExecStart=/opt/seo-agent/ops/tracking/run-daily.sh
+User=seo-agent
+Group=seo-agent
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

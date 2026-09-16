@@ -1,0 +1,10 @@
+[Unit]
+Description=Sunnystep SEO/GEO tracking daily timer (Asia/Singapore intent)
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+Persistent=true
+Unit=seo-tracking-daily.service
+
+[Install]
+WantedBy=timers.target

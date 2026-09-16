@@ -21,12 +21,14 @@ from .collectors.gsc import GscCollector, gsc_latest_available_date
 from .collectors.serper import SerperCollector
 from .config import TrackingConfig
 from .costs import CostLedger
-from .enums import CollectorStatus, RunStatus, RunType, Source
-from .exceptions import TrackingError
+from .enums import CollectorStatus, RunStatus, RunType, Severity, Source
+from .exceptions import AuthenticationError, TrackingError
 from .logging import StructuredLogger
 from .models import QualityCheckRow, RunLog, UpsertStats
 from .reports.baseline import BaselineService
 from .reports.opportunities import OpportunityBuilder
+from .reports.weekly import WeeklyReportService
+from .sinks.alerts import AlertService
 from .storage import TrackingStore
 from .transforms.metrics import date_chunks
 from .transforms.normalize import sha256_hex, utc_now_iso
@@ -75,6 +77,8 @@ class TrackingRunner:
         self.ga4_collector = ga4_collector
         self.serper_collector = serper_collector
         self.ai_collector = ai_collector
+        self._simulate_failure = ""
+        self.alert_service = AlertService(config, self.store)
 
     def doctor(self) -> Dict[str, object]:
         applied = self.store.migrate()
@@ -101,6 +105,7 @@ class TrackingRunner:
         simulate_failure: str = "",
     ) -> RunLog:
         self.store.migrate()
+        self._simulate_failure = (simulate_failure or "").strip().lower()
         run_id = str(uuid.uuid4())
         requested = list(collectors)
         self.store.acquire_lock(as_of.isoformat(), run_type.value, run_id, self.config.run_timeout_seconds)
@@ -293,6 +298,14 @@ class TrackingRunner:
             run.run_id, source, CollectorStatus.RUNNING, started_at=started
         )
         try:
+            if self._simulate_failure:
+                target_source, _, failure_kind = self._simulate_failure.partition(":")
+                if target_source == source:
+                    if failure_kind in {"authentication", "auth"}:
+                        raise AuthenticationError(
+                            f"Simulated authentication failure for {source} (gate demo)"
+                        )
+                    raise TrackingError(f"Simulated failure for {source}: {failure_kind or 'error'}")
             result = collector.collect(
                 run_id=run.run_id,
                 as_of_date=run.as_of_date,
@@ -338,6 +351,19 @@ class TrackingRunner:
                 source=source,
                 error_class=exc.error_code,
                 as_of_date=run.as_of_date.isoformat(),
+            )
+            severity = Severity.CRITICAL if exc.error_code in {
+                "AuthenticationError",
+                "PermissionDenied",
+                "CostLimitExceeded",
+            } else Severity.ERROR
+            self.alert_service.emit(
+                run_id=run.run_id,
+                alert_type=f"collector_failure:{source}:{exc.error_code}",
+                severity=severity,
+                summary=f"{source} collector failed with {exc.error_code}",
+                details={"source": source, "error_class": exc.error_code},
+                recommended_action="Inspect collector_state and retry after fixing credentials/access",
             )
             return {
                 "source": source,
@@ -418,9 +444,16 @@ class TrackingRunner:
             "result": summary,
         }
 
-    def run_daily(self, as_of: date, *, dry_run: bool = False, sources: Optional[List[str]] = None) -> Dict[str, Any]:
+    def run_daily(
+        self,
+        as_of: date,
+        *,
+        dry_run: bool = False,
+        sources: Optional[List[str]] = None,
+        simulate_failure: str = "",
+    ) -> Dict[str, Any]:
         requested = sources or list(COLLECTOR_ORDER)
-        run = self.start_run(RunType.DAILY, as_of, requested)
+        run = self.start_run(RunType.DAILY, as_of, requested, simulate_failure=simulate_failure)
         summaries = []
         for source in requested:
             if source == Source.GSC.value:
@@ -509,3 +542,19 @@ class TrackingRunner:
                 for row in rows
             ],
         }
+
+    def generate_weekly(
+        self,
+        *,
+        period_end: Optional[date] = None,
+        publish: bool = False,
+        lark_sink=None,
+        alert_service=None,
+    ) -> Dict[str, Any]:
+        service = WeeklyReportService(
+            self.config,
+            self.store,
+            lark_sink=lark_sink,
+            alert_service=alert_service or self.alert_service,
+        )
+        return service.generate(period_end=period_end, publish=publish)

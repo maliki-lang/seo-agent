@@ -133,7 +133,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     as_json,
                 )
                 return 0
-            payload = runner.run_daily(as_of)
+            payload = runner.run_daily(as_of, simulate_failure=args.simulate_failure)
             _print(payload, as_json)
             return 0 if payload["status"] != "failed" else 2
         if args.command == "backfill":
@@ -176,15 +176,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _print(payload, as_json)
             return 0
         if args.command == "weekly":
-            _print(
-                {
-                    "command": "weekly",
-                    "publish": bool(args.publish) and not bool(args.no_publish),
-                    "status": "not-yet-implemented",
-                },
-                as_json,
-            )
-            return 0
+            end = parse_date(args.period_end) if args.period_end else None
+            publish = bool(args.publish) and not bool(args.no_publish)
+            payload = runner.generate_weekly(period_end=end, publish=publish)
+            _print(payload, as_json)
+            return 0 if payload.get("status") != "failed" else 2
         parser.error(f"Unhandled command {args.command}")
         return 2
     except TrackingError as exc:

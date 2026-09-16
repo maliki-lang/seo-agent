@@ -505,14 +505,28 @@ class QualityCheckSuite:
         )
 
     def _lark_publish_parity(self) -> CheckResult:
+        published = self.store.fetchall(
+            "SELECT report_id, lark_record_id, status FROM weekly_reports WHERE status = 'published'"
+        )
+        if not published:
+            return CheckResult(
+                check_name="lark_publish_parity",
+                scope="lark",
+                status=CheckStatus.SKIPPED,
+                severity=Severity.ERROR,
+                threshold="published keys match intended set",
+                observed_value="no_published_reports",
+                details={"reason": "no published weekly reports yet"},
+            )
+        missing = [row["report_id"] for row in published if not row["lark_record_id"]]
         return CheckResult(
             check_name="lark_publish_parity",
             scope="lark",
-            status=CheckStatus.SKIPPED,
+            status=_pass_fail(not missing),
             severity=Severity.ERROR,
-            threshold="published keys match intended set",
-            observed_value="skipped",
-            details={"reason": "Lark weekly publish is Phase 5"},
+            threshold="each published report has lark_record_id",
+            observed_value=f"published={len(published)};missing_ids={len(missing)}",
+            details={"missing_report_ids": missing},
         )
 
 

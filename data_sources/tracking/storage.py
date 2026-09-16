@@ -618,6 +618,96 @@ class TrackingStore:
                 ],
             )
 
+    def upsert_weekly_report(self, row: Dict[str, Any]) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO weekly_reports(
+                    report_id, period_start, period_end, baseline_id, status,
+                    summary_json, quality_status, opportunity_count, lark_record_id,
+                    created_at, published_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(period_start, period_end) DO UPDATE SET
+                    report_id = excluded.report_id,
+                    baseline_id = excluded.baseline_id,
+                    status = excluded.status,
+                    summary_json = excluded.summary_json,
+                    quality_status = excluded.quality_status,
+                    opportunity_count = excluded.opportunity_count,
+                    lark_record_id = excluded.lark_record_id,
+                    published_at = excluded.published_at
+                """,
+                (
+                    row["report_id"],
+                    row["period_start"],
+                    row["period_end"],
+                    row.get("baseline_id"),
+                    row["status"],
+                    row["summary_json"],
+                    row["quality_status"],
+                    int(row["opportunity_count"]),
+                    row.get("lark_record_id"),
+                    row["created_at"],
+                    row.get("published_at"),
+                ),
+            )
+
+    def insert_alert(self, row: Dict[str, Any]) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO alerts(
+                    alert_id, run_id, severity, alert_type, summary, details_redacted,
+                    status, attempts, created_at, sent_at, external_reference
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["alert_id"],
+                    row["run_id"],
+                    row["severity"],
+                    row["alert_type"],
+                    row["summary"],
+                    row["details_redacted"],
+                    row["status"],
+                    int(row.get("attempts") or 0),
+                    row["created_at"],
+                    row.get("sent_at"),
+                    row.get("external_reference"),
+                ),
+            )
+
+    def update_alert(
+        self,
+        alert_id: str,
+        *,
+        status: Optional[str] = None,
+        attempts: Optional[int] = None,
+        sent_at: Optional[str] = None,
+        external_reference: Optional[str] = None,
+    ) -> None:
+        assignments = []
+        values: List[Any] = []
+        if status is not None:
+            assignments.append("status = ?")
+            values.append(status)
+        if attempts is not None:
+            assignments.append("attempts = ?")
+            values.append(attempts)
+        if sent_at is not None:
+            assignments.append("sent_at = ?")
+            values.append(sent_at)
+        if external_reference is not None:
+            assignments.append("external_reference = ?")
+            values.append(external_reference)
+        if not assignments:
+            return
+        values.append(alert_id)
+        with self.connection() as conn:
+            conn.execute(
+                f"UPDATE alerts SET {', '.join(assignments)} WHERE alert_id = ?",
+                values,
+            )
+
     def count(self, table: str) -> int:
         if table not in {
             "gsc_daily",
