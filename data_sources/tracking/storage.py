@@ -914,6 +914,9 @@ class TrackingStore:
             "eligibility_reasons_json",
             "selection_reasons_json",
             "alternate_rank",
+            "proposed_action",
+            "ga4_confidence_multiplier",
+            "multi_page_class",
         }
         assignments = []
         values: List[Any] = []
@@ -1014,11 +1017,61 @@ class TrackingStore:
             "ai_question_candidates",
             "ai_question_sources",
             "catalogue_comparisons",
+            "keyword_families",
         }:
             raise SchemaMismatchError(f"Unknown table {table}")
         with self.connection() as conn:
             row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
             return int(row["n"])
+
+    def delete_keyword_families_for_build(self, build_id: str) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM keyword_families WHERE build_id = ?", (build_id,))
+
+    def insert_keyword_families(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        values = []
+        for row in rows:
+            values.append(
+                (
+                    row["family_id"],
+                    row["build_id"],
+                    row["family_key"],
+                    row["family_label"],
+                    row.get("primary_candidate_id"),
+                    row.get("routing_bucket"),
+                    row.get("search_intent"),
+                    row.get("strategic_lane"),
+                    json.dumps(row.get("member_candidate_ids_json") or [], sort_keys=True),
+                    int(row.get("member_count") or 0),
+                    int(row.get("family_gsc_clicks") or 0),
+                    int(row.get("family_gsc_impressions") or 0),
+                    row.get("family_weighted_ctr"),
+                    row.get("family_weighted_position"),
+                    row.get("primary_target_page"),
+                    row["family_method"],
+                    row.get("family_confidence"),
+                    row.get("approval_status") or "draft",
+                    row.get("reviewed_by"),
+                    row.get("reviewed_at"),
+                    row["created_at"],
+                    row["updated_at"],
+                )
+            )
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO keyword_families(
+                    family_id, build_id, family_key, family_label, primary_candidate_id,
+                    routing_bucket, search_intent, strategic_lane, member_candidate_ids_json,
+                    member_count, family_gsc_clicks, family_gsc_impressions, family_weighted_ctr,
+                    family_weighted_position, primary_target_page, family_method, family_confidence,
+                    approval_status, reviewed_by, reviewed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
 
     def insert_catalogue_cluster(self, row: Dict[str, Any]) -> None:
         with self.connection() as conn:

@@ -183,6 +183,37 @@ class BusinessRelevanceStatus(str, Enum):
     PENDING_REVIEW = "pending_review"
 
 
+class TargetPageStatus(str, Enum):
+    OBSERVED_PAGE_SUITABLE = "observed_page_suitable"
+    OBSERVED_PAGE_NEEDS_OPTIMIZATION = "observed_page_needs_optimization"
+    MULTIPLE_PAGES_COMPETING = "multiple_pages_competing"
+    APPROVED_NEW_PAGE = "approved_new_page"
+    HOMEPAGE_UNRESOLVED = "homepage_unresolved"
+    NO_SENSIBLE_TARGET = "no_sensible_target"
+    MANUAL_REVIEW = "manual_review"
+
+
+class ProposedAction(str, Enum):
+    OPTIMIZE_EXISTING = "optimize_existing"
+    CONSOLIDATE_COMPETING_PAGES = "consolidate_competing_pages"
+    CREATE_NEW_PAGE = "create_new_page"
+    PROTECT_EXISTING = "protect_existing"
+    MONITOR_ONLY = "monitor_only"
+    NO_ACTION = "no_action"
+
+
+class MultiPageClass(str, Enum):
+    CANNIBALIZATION_CANDIDATE = "cannibalization_candidate"
+    INTENT_SPLIT = "intent_split"
+    NORMAL_PAGE_VARIATION = "normal_page_variation"
+    UNRESOLVED = "unresolved"
+
+
+class FamilyRole(str, Enum):
+    PRIMARY = "primary"
+    VARIANT = "variant"
+
+
 class CollectorStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
