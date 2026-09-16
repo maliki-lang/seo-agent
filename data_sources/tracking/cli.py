@@ -127,6 +127,78 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--limit", type=int, default=0, help="Max candidates to validate (0 = all matching)")
     validate.set_defaults(handler="catalogue_validate_serp")
 
+    clusters = catalogue_sub.add_parser(
+        "derive-clusters",
+        parents=[shared],
+        help="Derive reviewable clusters from keyword candidates",
+    )
+    clusters.add_argument("--build-id", required=True)
+    clusters.add_argument("--reviewed-by", default="cluster-builder")
+    clusters.set_defaults(handler="catalogue_derive_clusters")
+
+    build_q = catalogue_sub.add_parser(
+        "build-ai-questions",
+        parents=[shared],
+        help="Derive AI-question candidates with GSC/keyword lineage",
+    )
+    build_q.add_argument("--keyword-build-id", required=True)
+    build_q.add_argument("--count", type=int, default=20)
+    build_q.add_argument("--status", default="draft")
+    build_q.add_argument("--created-by", default="ai-question-builder")
+    build_q.set_defaults(handler="catalogue_build_ai_questions")
+
+    export_review = catalogue_sub.add_parser(
+        "export-review",
+        parents=[shared],
+        help="Export keyword/question review CSV with evidence fields",
+    )
+    export_review.add_argument("--build-id", required=True)
+    export_review.add_argument("--question-build-id")
+    export_review.add_argument("--output", required=True)
+    export_review.set_defaults(handler="catalogue_export_review")
+
+    import_decisions = catalogue_sub.add_parser(
+        "import-decisions",
+        parents=[shared],
+        help="Import reviewer decisions from CSV",
+    )
+    import_decisions.add_argument("--build-id", required=True)
+    import_decisions.add_argument("--question-build-id")
+    import_decisions.add_argument("--input", required=True)
+    import_decisions.set_defaults(handler="catalogue_import_decisions")
+
+    compare = catalogue_sub.add_parser(
+        "compare",
+        parents=[shared],
+        help="Compare evidence build against provisional candidate-v0.1 catalogue",
+    )
+    compare.add_argument("--build-id", required=True)
+    compare.add_argument("--question-build-id")
+    compare.set_defaults(handler="catalogue_compare")
+
+    approve = catalogue_sub.add_parser(
+        "approve",
+        parents=[shared],
+        help="Approve a keyword+question catalogue build after review",
+    )
+    approve.add_argument("--build-id", required=True)
+    approve.add_argument("--question-build-id")
+    approve.add_argument("--approved-by", required=True)
+    approve.add_argument("--keyword-minimum", type=int)
+    approve.add_argument("--question-count", type=int, default=20)
+    approve.set_defaults(handler="catalogue_approve")
+
+    activate = catalogue_sub.add_parser(
+        "activate",
+        parents=[shared],
+        help="Activate an approved catalogue version (separate from approve)",
+    )
+    activate.add_argument("--build-id", required=True)
+    activate.add_argument("--question-build-id")
+    activate.add_argument("--catalogue-version")
+    activate.add_argument("--confirm", action="store_true")
+    activate.set_defaults(handler="catalogue_activate")
+
     lineage = catalogue_sub.add_parser(
         "lineage",
         parents=[shared],
@@ -227,8 +299,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0 if payload.get("status") != "failed" else 2
         if args.command == "catalogue":
             from .catalogue.builder import build_keyword_catalogue, get_candidate_lineage
+            from .catalogue.clusters import derive_clusters
+            from .catalogue.compare import compare_with_provisional
             from .catalogue.enrich import enrich_build_with_ga4
+            from .catalogue.questions import build_ai_questions
             from .catalogue.validate_serp import validate_serp_for_build
+            from .catalogue.workflow import (
+                activate_catalogue,
+                approve_catalogue,
+                export_review,
+                import_decisions,
+            )
 
             if args.catalogue_command == "build-keywords":
                 payload = build_keyword_catalogue(
@@ -263,6 +344,73 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
                 _print(payload, as_json)
                 return 0 if payload.get("failed", 0) == 0 and payload.get("blocked", 0) == 0 else 2
+            if args.catalogue_command == "derive-clusters":
+                payload = derive_clusters(
+                    runner.store, build_id=args.build_id, reviewed_by=args.reviewed_by
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "build-ai-questions":
+                payload = build_ai_questions(
+                    runner.store,
+                    config,
+                    keyword_build_id=args.keyword_build_id,
+                    count=args.count,
+                    status=args.status,
+                    created_by=args.created_by,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "export-review":
+                payload = export_review(
+                    runner.store,
+                    build_id=args.build_id,
+                    output=args.output,
+                    question_build_id=args.question_build_id,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "import-decisions":
+                payload = import_decisions(
+                    runner.store,
+                    build_id=args.build_id,
+                    input_path=args.input,
+                    question_build_id=args.question_build_id,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "compare":
+                payload = compare_with_provisional(
+                    runner.store,
+                    config,
+                    keyword_build_id=args.build_id,
+                    question_build_id=args.question_build_id,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "approve":
+                payload = approve_catalogue(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    approved_by=args.approved_by,
+                    question_build_id=args.question_build_id,
+                    keyword_minimum=args.keyword_minimum,
+                    question_count=args.question_count,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "activate":
+                payload = activate_catalogue(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    confirm=bool(args.confirm),
+                    question_build_id=args.question_build_id,
+                    catalogue_version=args.catalogue_version,
+                )
+                _print(payload, as_json)
+                return 0
             if args.catalogue_command == "lineage":
                 payload = get_candidate_lineage(runner.store, args.candidate_id)
                 _print(payload, as_json)
