@@ -27,7 +27,14 @@ from ..transforms.normalize import (
     utc_now_iso,
 )
 from .builder import thresholds_from_config
-from .scoring import refresh_decision_reason, score_candidate
+from .policy import policy_from_config
+from .scoring import (
+    refresh_decision_reason,
+    score_candidate,
+    score_candidate_v2,
+    score_v2_update_fields,
+    serp_component_scores,
+)
 
 SearchFn = Callable[[str], Dict[str, Any]]
 SUNNYSTEP_HOSTS = {"sunnystep.com", "gosunnystep.myshopify.com"}
@@ -74,27 +81,44 @@ def validate_serp_for_build(
     build_id: str,
     decision: str = CandidateDecision.PENDING.value,
     limit: int = 0,
+    pool: str = "decision",
     search_fn: Optional[SearchFn] = None,
     cost_ledger: Optional[CostLedger] = None,
     as_of: Optional[date] = None,
+    require_serper_for_v2: bool = True,
 ) -> Dict[str, Any]:
-    """Paid Serper validation for shortlisted candidates. Explicit command only."""
+    """Paid Serper validation for shortlisted catalogue candidates. Explicit command only.
+
+    pool:
+      - decision: filter by decision value (legacy Phase 7 behavior)
+      - preselected: validate serp_preselected=1 family primaries (Phase 12)
+    """
     store.migrate()
-    if decision not in {d.value for d in CandidateDecision}:
-        raise ConfigurationError(f"Invalid decision filter: {decision}")
     builds = store.fetchall("SELECT * FROM catalogue_builds WHERE build_id = ?", (build_id,))
     if not builds:
         raise DataQualityError(f"Unknown build_id {build_id}")
 
-    sql = """
-        SELECT * FROM keyword_candidates
-        WHERE build_id = ? AND decision = ?
-        ORDER BY final_selection_score DESC, gsc_impressions DESC, normalized_keyword
-    """
-    params: List[Any] = [build_id, decision]
-    if decision == CandidateDecision.SELECTED.value:
-        # Selected shortlist is the primary Phase-7 validation set; also allow pending.
-        pass
+    pool_mode = (pool or "decision").strip().lower()
+    if pool_mode not in {"decision", "preselected"}:
+        raise ConfigurationError("pool must be 'decision' or 'preselected'")
+
+    if pool_mode == "preselected":
+        sql = """
+            SELECT * FROM keyword_candidates
+            WHERE build_id = ? AND serp_preselected = 1
+            ORDER BY serp_preselect_rank ASC, final_selection_score DESC, gsc_impressions DESC, normalized_keyword
+        """
+        params: List[Any] = [build_id]
+    else:
+        if decision not in {d.value for d in CandidateDecision}:
+            raise ConfigurationError(f"Invalid decision filter: {decision}")
+        sql = """
+            SELECT * FROM keyword_candidates
+            WHERE build_id = ? AND decision = ?
+            ORDER BY final_selection_score DESC, gsc_impressions DESC, normalized_keyword
+        """
+        params = [build_id, decision]
+
     candidates = [dict(r) for r in store.fetchall(sql, params)]
     if limit and limit > 0:
         candidates = candidates[:limit]
@@ -102,10 +126,11 @@ def validate_serp_for_build(
         return {
             "build_id": build_id,
             "decision": decision,
+            "pool": pool_mode,
             "validated": 0,
             "failed": 0,
             "skipped": 0,
-            "note": "No candidates matched the decision filter.",
+            "note": "No candidates matched the pool/decision filter.",
         }
 
     ledger = cost_ledger or CostLedger(config.daily_cost_cap_usd)
@@ -146,6 +171,7 @@ def validate_serp_for_build(
     )
 
     thresholds = thresholds_from_config(config)
+    selection_policy = policy_from_config(config)
     validated = 0
     failed = 0
     blocked = 0
@@ -166,6 +192,18 @@ def validate_serp_for_build(
                         "reason": str(exc),
                     }
                 )
+                # Record explicit blocked state for missing Serper on this and remaining rows.
+                store.update_keyword_candidate(
+                    cand["candidate_id"],
+                    {
+                        "selection_reasons_json": {
+                            "reasons": ["serper_blocked_by_cost_cap"],
+                            "hard_excluded": False,
+                            "exclusion_reasons": [],
+                        },
+                        "updated_at": utc_now_iso(),
+                    },
+                )
                 break
 
             try:
@@ -178,6 +216,17 @@ def validate_serp_for_build(
                         "status": "failed",
                         "reason": exc.__class__.__name__,
                     }
+                )
+                store.update_keyword_candidate(
+                    cand["candidate_id"],
+                    {
+                        "selection_reasons_json": {
+                            "reasons": [f"serper_failed:{exc.__class__.__name__}"],
+                            "hard_excluded": False,
+                            "exclusion_reasons": [],
+                        },
+                        "updated_at": utc_now_iso(),
+                    },
                 )
                 continue
 
@@ -239,6 +288,40 @@ def validate_serp_for_build(
                 proposed_target_ranks=target_ranks,
                 serper_validated=True,
             )
+            vis, serp_opp, align, serp_conf, feasibility, _serp_reasons = serp_component_scores(
+                position=position,
+                proposed_target_ranks=target_ranks,
+                validated=True,
+                target_actionability=float(cand.get("target_actionability_score") or 0.0),
+            )
+            enriched = dict(cand)
+            enriched.update(
+                {
+                    "serper_position": position,
+                    "serper_run_id": run_id,
+                    "serper_collected_at": now,
+                    "proposed_target_ranks": int(target_ranks),
+                    "serper_validation_score": scores.serper_validation_score,
+                }
+            )
+            v2 = score_candidate_v2(
+                enriched,
+                score_weights=selection_policy.score_weights,
+                penalties=selection_policy.penalties,
+                min_impressions=selection_policy.min_impressions,
+                require_serper=require_serper_for_v2 and pool_mode == "preselected",
+            )
+            v2_fields = score_v2_update_fields(v2)
+            # Ensure separated Serper components from this validation win.
+            v2_fields.update(
+                {
+                    "serp_visibility_score": vis,
+                    "serp_opportunity_score": serp_opp,
+                    "serp_target_alignment_score": align,
+                    "serp_validation_confidence": serp_conf,
+                    "serp_feasibility_score": feasibility,
+                }
+            )
             store.update_keyword_candidate(
                 cand["candidate_id"],
                 {
@@ -257,6 +340,7 @@ def validate_serp_for_build(
                         cand["decision_reason"], scores.reasons
                     ),
                     "updated_at": now,
+                    **v2_fields,
                 },
             )
             validated += 1
@@ -267,6 +351,9 @@ def validate_serp_for_build(
                     "sunnystep_position": position,
                     "proposed_target_ranks": target_ranks,
                     "ai_overview_status": aio_status.value,
+                    "selection_score_v2": v2.selection_score_v2,
+                    "serp_visibility_score": vis,
+                    "serp_opportunity_score": serp_opp,
                 }
             )
 
@@ -298,6 +385,7 @@ def validate_serp_for_build(
 
     required = len(candidates)
     report = {
+        "pool": pool_mode,
         "required_candidates": required,
         "validated": validated,
         "failed": failed,
@@ -323,7 +411,8 @@ def validate_serp_for_build(
     )
     return {
         "build_id": build_id,
-        "decision": decision,
+        "decision": decision if pool_mode == "decision" else None,
+        "pool": pool_mode,
         "serper_run_id": run_id,
         "cost_usd": str(cost),
         "validated": validated,

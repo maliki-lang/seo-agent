@@ -124,6 +124,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.add_argument("--build-id", required=True)
     validate.add_argument("--decision", default="selected", help="Candidate decision filter (default: selected)")
+    validate.add_argument(
+        "--pool",
+        default="decision",
+        choices=["decision", "preselected"],
+        help="decision=filter by --decision; preselected=serp_preselected family primaries",
+    )
     validate.add_argument("--limit", type=int, default=0, help="Max candidates to validate (0 = all matching)")
     validate.set_defaults(handler="catalogue_validate_serp")
 
@@ -264,6 +270,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip shared-page GA4 confidence multiplier assignment",
     )
     eval_targets.set_defaults(handler="catalogue_evaluate_targets")
+
+    preselect = catalogue_sub.add_parser(
+        "preselect-serp",
+        parents=[shared],
+        help="Build a lane-balanced Serper preselection pool of family primaries",
+    )
+    preselect.add_argument("--build-id", required=True)
+    preselect.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max primaries to preselect (0 = catalogue.serper_preselection_limit)",
+    )
+    preselect.set_defaults(handler="catalogue_preselect_serp")
     return parser
 
 
@@ -362,6 +382,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from .catalogue.builder import build_keyword_catalogue, get_candidate_lineage
             from .catalogue.classify import classify_build
             from .catalogue.families import derive_families_for_build
+            from .catalogue.preselection import preselect_serp_pool
             from .catalogue.target_pages import evaluate_targets_for_build
             from .catalogue.clusters import derive_clusters
             from .catalogue.compare import compare_with_provisional
@@ -417,6 +438,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
                 _print(payload, as_json)
                 return 0
+            if args.catalogue_command == "preselect-serp":
+                payload = preselect_serp_pool(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    limit=args.limit if args.limit and args.limit > 0 else None,
+                )
+                _print(payload, as_json)
+                return 0
             if args.catalogue_command == "enrich-ga4":
                 payload = enrich_build_with_ga4(
                     runner.store,
@@ -433,6 +463,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     config,
                     build_id=args.build_id,
                     decision=args.decision,
+                    pool=args.pool,
                     limit=args.limit,
                 )
                 _print(payload, as_json)
