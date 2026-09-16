@@ -73,3 +73,22 @@ Rerun daily/collect for the same date; natural key counts unchanged; upsert stat
 ## 11. Runbook walkthrough
 
 Follow `docs/tracking-runbook.md` recovery path end-to-end in <30 minutes.
+
+## 12. Catalogue provenance (Phases 6–9)
+
+```bash
+python -m data_sources.tracking.cli catalogue build-keywords --gsc-start-date YYYY-MM-DD --gsc-end-date YYYY-MM-DD --json
+python -m data_sources.tracking.cli catalogue derive-clusters --build-id BUILD --json
+python -m data_sources.tracking.cli catalogue build-ai-questions --keyword-build-id BUILD --count 20 --json
+python -m data_sources.tracking.cli catalogue export-review --build-id BUILD --output /tmp/review.csv --json
+python -m data_sources.tracking.cli catalogue approve --build-id BUILD --approved-by "Ting" --keyword-minimum N --json
+python -m data_sources.tracking.cli catalogue activate --build-id BUILD --confirm --json
+python -m data_sources.tracking.cli catalogue check --build-id BUILD --json
+python -m data_sources.tracking.cli catalogue report --build-id BUILD --output docs/catalogue-provenance-v1.md --json
+```
+
+Evidence: build fingerprint + funnel; lineage sources; 20 questions; approve≠activate; provisional `candidate-v0.1` still queryable; report counts parity.
+
+## 13. Persistent unattended execution
+
+Prefer systemd on persistent disk (`ops/tracking/run-daily-persistent.sh`). GitHub Actions may probe with materialize-credentials but must not be treated as the durable DB.

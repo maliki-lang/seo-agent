@@ -199,6 +199,25 @@ def build_parser() -> argparse.ArgumentParser:
     activate.add_argument("--confirm", action="store_true")
     activate.set_defaults(handler="catalogue_activate")
 
+    cat_check = catalogue_sub.add_parser(
+        "check",
+        parents=[shared],
+        help="Run build-scoped catalogue quality gates",
+    )
+    cat_check.add_argument("--build-id", required=True)
+    cat_check.add_argument("--question-build-id")
+    cat_check.set_defaults(handler="catalogue_check")
+
+    cat_report = catalogue_sub.add_parser(
+        "report",
+        parents=[shared],
+        help="Write stakeholder provenance Markdown+JSON report",
+    )
+    cat_report.add_argument("--build-id", required=True)
+    cat_report.add_argument("--question-build-id")
+    cat_report.add_argument("--output", default="docs/catalogue-provenance-v1.md")
+    cat_report.set_defaults(handler="catalogue_report")
+
     lineage = catalogue_sub.add_parser(
         "lineage",
         parents=[shared],
@@ -217,7 +236,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         runner = TrackingRunner(config)
         as_json = args.json
         if args.command == "doctor":
-            _print(runner.doctor(), as_json)
+            payload = runner.doctor(command="doctor")
+            _print(payload, as_json)
+            if config.env == "production" and not payload.get("ok", True):
+                return 2
             return 0
         if args.command == "collect":
             as_of = parse_date(args.as_of_date) if args.as_of_date else as_of_date(tz_name=config.timezone)
@@ -310,6 +332,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 export_review,
                 import_decisions,
             )
+            from .catalogue.report import write_provenance_report
+            from .checks.catalogue_checks import CatalogueQualitySuite
 
             if args.catalogue_command == "build-keywords":
                 payload = build_keyword_catalogue(
@@ -411,6 +435,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
                 _print(payload, as_json)
                 return 0
+            if args.catalogue_command == "check":
+                payload = CatalogueQualitySuite(config, runner.store).run_for_build(
+                    args.build_id,
+                    question_build_id=args.question_build_id,
+                )
+                _print(payload, as_json)
+                return 0 if payload.get("gate_status") != "failed" else 2
+            if args.catalogue_command == "report":
+                payload = write_provenance_report(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    output=args.output,
+                    question_build_id=args.question_build_id,
+                )
+                # Optional parity check against report counts.
+                checks = CatalogueQualitySuite(config, runner.store).run_for_build(
+                    args.build_id,
+                    question_build_id=args.question_build_id,
+                    report_counts=payload.get("counts_for_parity") or {},
+                )
+                payload["quality"] = checks
+                _print(payload, as_json)
+                return 0 if checks.get("gate_status") != "failed" else 2
             if args.catalogue_command == "lineage":
                 payload = get_candidate_lineage(runner.store, args.candidate_id)
                 _print(payload, as_json)
