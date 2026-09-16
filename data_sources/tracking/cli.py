@@ -101,11 +101,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     build_kw.add_argument("--gsc-start-date", help="Inclusive GSC window start (default: 90-day complete window)")
     build_kw.add_argument("--gsc-end-date", help="Inclusive GSC window end")
-    build_kw.add_argument("--ga4-start-date", help="Recorded for Phase 7 enrichment; not applied in Phase 6")
-    build_kw.add_argument("--ga4-end-date", help="Recorded for Phase 7 enrichment; not applied in Phase 6")
+    build_kw.add_argument("--ga4-start-date", help="Optional GA4 window start; triggers enrichment when both GA4 dates set")
+    build_kw.add_argument("--ga4-end-date", help="Optional GA4 window end; triggers enrichment when both GA4 dates set")
     build_kw.add_argument("--status", default="draft", help="Build status (default: draft)")
     build_kw.add_argument("--created-by", default="catalogue-builder")
     build_kw.set_defaults(handler="catalogue_build_keywords")
+
+    enrich = catalogue_sub.add_parser(
+        "enrich-ga4",
+        parents=[shared],
+        help="Enrich an existing keyword build with GA4 organic page metrics",
+    )
+    enrich.add_argument("--build-id", required=True)
+    enrich.add_argument("--ga4-start-date")
+    enrich.add_argument("--ga4-end-date")
+    enrich.set_defaults(handler="catalogue_enrich_ga4")
+
+    validate = catalogue_sub.add_parser(
+        "validate-serp",
+        parents=[shared],
+        help="Explicit paid Serper validation for shortlisted candidates",
+    )
+    validate.add_argument("--build-id", required=True)
+    validate.add_argument("--decision", default="selected", help="Candidate decision filter (default: selected)")
+    validate.add_argument("--limit", type=int, default=0, help="Max candidates to validate (0 = all matching)")
+    validate.set_defaults(handler="catalogue_validate_serp")
 
     lineage = catalogue_sub.add_parser(
         "lineage",
@@ -207,6 +227,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0 if payload.get("status") != "failed" else 2
         if args.command == "catalogue":
             from .catalogue.builder import build_keyword_catalogue, get_candidate_lineage
+            from .catalogue.enrich import enrich_build_with_ga4
+            from .catalogue.validate_serp import validate_serp_for_build
 
             if args.catalogue_command == "build-keywords":
                 payload = build_keyword_catalogue(
@@ -221,6 +243,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
                 _print(payload, as_json)
                 return 0
+            if args.catalogue_command == "enrich-ga4":
+                payload = enrich_build_with_ga4(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    ga4_start=parse_date(args.ga4_start_date) if args.ga4_start_date else None,
+                    ga4_end=parse_date(args.ga4_end_date) if args.ga4_end_date else None,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "validate-serp":
+                payload = validate_serp_for_build(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    decision=args.decision,
+                    limit=args.limit,
+                )
+                _print(payload, as_json)
+                return 0 if payload.get("failed", 0) == 0 and payload.get("blocked", 0) == 0 else 2
             if args.catalogue_command == "lineage":
                 payload = get_candidate_lineage(runner.store, args.candidate_id)
                 _print(payload, as_json)
