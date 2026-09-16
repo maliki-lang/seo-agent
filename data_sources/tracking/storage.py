@@ -917,6 +917,18 @@ class TrackingStore:
             "proposed_action",
             "ga4_confidence_multiplier",
             "multi_page_class",
+            "gsc_protection_score",
+            "gsc_opportunity_score_v2",
+            "product_need_relevance_score",
+            "serp_visibility_score",
+            "serp_target_alignment_score",
+            "serp_validation_confidence",
+            "serp_feasibility_score",
+            "available_evidence_weight",
+            "missing_evidence_fields_json",
+            "score_confidence",
+            "serp_preselected",
+            "serp_preselect_rank",
         }
         assignments = []
         values: List[Any] = []
@@ -928,6 +940,7 @@ class TrackingStore:
                 "serper_result_types_json",
                 "eligibility_reasons_json",
                 "selection_reasons_json",
+                "missing_evidence_fields_json",
             } and value is not None:
                 value = json.dumps(value, sort_keys=True)
             assignments.append(f"{key} = ?")
