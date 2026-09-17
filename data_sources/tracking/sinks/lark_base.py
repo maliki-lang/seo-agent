@@ -86,15 +86,21 @@ class LarkBaseSink:
         token = self._tenant_token()
         record_ids = []
         for row in opportunities:
+            # Preserve human-owned review fields — only project machine-owned scores/status.
             fields = {
                 "opportunity_id": row["opportunity_id"],
                 "report_id": row["report_id"],
-                "category": row["category"],
-                "target_query_or_question": row["target_query_or_question"][:500],
-                "target_page": row["target_page"],
-                "priority_score": row["priority_score"],
-                "proposed_action": row["proposed_action"][:1000],
+                "category": row.get("category") or row.get("source_type") or "",
+                "target_query_or_question": (row.get("target_query_or_question") or "")[:500],
+                "target_page": row.get("target_page") or "",
+                "priority_score": row.get("priority_score"),
+                "proposed_action": (row.get("proposed_action") or "")[:1000],
+                "action_type": row.get("action_type") or "",
+                "expected_incremental_clicks": row.get("expected_incremental_clicks"),
+                "portfolio_rank": row.get("portfolio_rank"),
             }
+            # Do not send reviewed_by / reviewed_at / review_status / reviewer reasons —
+            # those remain human-owned in Lark.
             url = (
                 f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
                 f"{self.config.lark_base_app_token}/tables/{self.config.lark_opportunities_table_id}/records"

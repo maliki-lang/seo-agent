@@ -618,6 +618,150 @@ class TrackingStore:
                 ],
             )
 
+    def insert_opportunities_v2(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+
+        def _json(value: Any) -> str:
+            if isinstance(value, str):
+                return value
+            return json.dumps(value if value is not None else {}, sort_keys=True)
+
+        def _json_list(value: Any) -> str:
+            if isinstance(value, str):
+                return value
+            return json.dumps(value if value is not None else [], sort_keys=True)
+
+        values = []
+        for row in rows:
+            values.append(
+                (
+                    row["opportunity_id"],
+                    row["report_id"],
+                    row.get("opportunity_version") or "v2",
+                    row["category"],
+                    row.get("source_type"),
+                    row["problem"],
+                    _json(row.get("supporting_evidence_json") or {}),
+                    _json_list(row.get("source_row_references_json") or []),
+                    row.get("target_query_or_question") or "",
+                    row.get("target_page") or "",
+                    row.get("target_asset"),
+                    row.get("target_page_status"),
+                    row["proposed_action"],
+                    row.get("action_type"),
+                    row.get("cluster_id"),
+                    row.get("family_id"),
+                    _json_list(row.get("benchmark_ids_json") or []),
+                    row.get("expected_incremental_clicks"),
+                    row.get("expected_geo_gain"),
+                    row.get("estimated_cost"),
+                    row.get("cost_currency"),
+                    row["owner"],
+                    float(row.get("impact_score") or 0),
+                    row.get("impact_estimate") or "",
+                    row["confidence_label"],
+                    float(row["confidence_value"]),
+                    row.get("effort_label") or "M",
+                    float(row.get("effort_value") or 2.0),
+                    float(row.get("priority_score") or 0),
+                    row["metric_to_watch"],
+                    _json(row.get("measurement_window_json") or {}),
+                    _json_list(row.get("assumptions_json") or []),
+                    row.get("llm_assessment_id"),
+                    row.get("review_status") or "pending",
+                    row.get("reviewed_by"),
+                    row.get("reviewed_at"),
+                    row.get("portfolio_rank"),
+                    _json(row.get("priority_inputs_json") or {}),
+                    row.get("merge_group_id"),
+                    row.get("blocked_reason"),
+                    row.get("catalogue_version"),
+                    _json(row.get("selection_report_json") or {}),
+                    row["status"],
+                    row["created_at"],
+                    row.get("updated_at") or row["created_at"],
+                )
+            )
+        with self.connection() as conn:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(opportunities)").fetchall()}
+            if "opportunity_version" not in cols:
+                # Migration not applied yet — fall back to v1 insert shape.
+                self.insert_opportunities(
+                    [
+                        {
+                            **row,
+                            "supporting_evidence_json": row.get("supporting_evidence_json") or {},
+                            "source_row_references_json": row.get("source_row_references_json") or [],
+                        }
+                        for row in rows
+                    ]
+                )
+                return
+            conn.executemany(
+                """
+                INSERT INTO opportunities(
+                    opportunity_id, report_id, opportunity_version, category, source_type, problem,
+                    supporting_evidence_json, source_row_references_json,
+                    target_query_or_question, target_page, target_asset, target_page_status,
+                    proposed_action, action_type, cluster_id, family_id, benchmark_ids_json,
+                    expected_incremental_clicks, expected_geo_gain, estimated_cost, cost_currency,
+                    owner, impact_score, impact_estimate, confidence_label, confidence_value,
+                    effort_label, effort_value, priority_score, metric_to_watch,
+                    measurement_window_json, assumptions_json, llm_assessment_id,
+                    review_status, reviewed_by, reviewed_at, portfolio_rank, priority_inputs_json,
+                    merge_group_id, blocked_reason, catalogue_version, selection_report_json,
+                    status, created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?
+                )
+                """,
+                values,
+            )
+
+    def update_opportunity(self, opportunity_id: str, fields: Dict[str, Any]) -> None:
+        if not fields:
+            return
+        allowed = {
+            "status",
+            "review_status",
+            "reviewed_by",
+            "reviewed_at",
+            "llm_assessment_id",
+            "blocked_reason",
+            "selection_report_json",
+            "assumptions_json",
+            "priority_score",
+            "priority_inputs_json",
+            "updated_at",
+            "proposed_action",
+            "action_type",
+            "estimated_cost",
+            "cost_currency",
+        }
+        json_fields = {
+            "selection_report_json",
+            "assumptions_json",
+            "priority_inputs_json",
+        }
+        assignments = []
+        values: List[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                raise SchemaMismatchError(f"Unsupported opportunity field: {key}")
+            if key in json_fields and value is not None and not isinstance(value, str):
+                value = json.dumps(value, sort_keys=True)
+            assignments.append(f"{key} = ?")
+            values.append(value)
+        values.append(opportunity_id)
+        with self.connection() as conn:
+            conn.execute(
+                f"UPDATE opportunities SET {', '.join(assignments)} WHERE opportunity_id = ?",
+                values,
+            )
+
     def upsert_weekly_report(self, row: Dict[str, Any]) -> None:
         with self.connection() as conn:
             conn.execute(
@@ -931,6 +1075,22 @@ class TrackingStore:
             "serp_preselect_rank",
             "portfolio_slot",
             "review_group",
+            "llm_assessment_id",
+            "llm_review_stage",
+            "llm_customer_need",
+            "llm_intent",
+            "llm_business_relevance",
+            "llm_business_relevance_rationale",
+            "llm_family_key",
+            "llm_is_representative",
+            "llm_semantic_duplicates_json",
+            "llm_recommended_target_page",
+            "llm_no_suitable_target",
+            "llm_actionability",
+            "llm_actionability_rationale",
+            "semantic_authority",
+            "llm_pool_assessment_id",
+            "llm_semantic_confidence",
         }
         assignments = []
         values: List[Any] = []
@@ -943,6 +1103,7 @@ class TrackingStore:
                 "eligibility_reasons_json",
                 "selection_reasons_json",
                 "missing_evidence_fields_json",
+                "llm_semantic_duplicates_json",
             } and value is not None:
                 value = json.dumps(value, sort_keys=True)
             assignments.append(f"{key} = ?")
@@ -1033,6 +1194,7 @@ class TrackingStore:
             "ai_question_sources",
             "catalogue_comparisons",
             "keyword_families",
+            "llm_assessments",
         }:
             raise SchemaMismatchError(f"Unknown table {table}")
         with self.connection() as conn:
@@ -1141,21 +1303,62 @@ class TrackingStore:
                 row.get("reviewed_at"),
                 row["created_at"],
                 row["updated_at"],
+                row.get("source_type"),
+                row.get("source_reference"),
+                json.dumps(row.get("source_evidence_refs_json") or [], sort_keys=True),
+                row.get("persona"),
+                row.get("situation"),
+                row.get("decision_to_make"),
+                json.dumps(row.get("constraints_json") or [], sort_keys=True),
+                json.dumps(row.get("expected_answer_elements_json") or [], sort_keys=True),
+                row.get("naturalness_status") or "pending",
+                row.get("distinctness_status") or "pending",
+                row.get("safety_status") or "pending",
+                row.get("pilot_status") or "not_run",
+                json.dumps(row.get("pilot_results_json") or {}, sort_keys=True),
+                row.get("pilot_override_by"),
+                row.get("pilot_override_at"),
+                row.get("pilot_override_reason"),
+                row.get("llm_assessment_id"),
+                row.get("review_stage") or "evidence_ready",
+                row.get("family_bucket"),
+                int(row.get("human_validated_hypothesis") or 0),
             )
             for row in rows
         ]
         with self.connection() as conn:
-            conn.executemany(
-                """
-                INSERT INTO ai_question_candidates(
-                    question_candidate_id, build_id, question, cluster_id, intent,
-                    proposed_target_page, transformation_method, source_keyword_ids,
-                    source_candidate_ids, decision, decision_reason, reviewed_by,
-                    reviewed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                values,
-            )
+            # Detect whether Phase 14 columns exist (pre-migration test DBs).
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(ai_question_candidates)").fetchall()}
+            if "source_type" in cols:
+                conn.executemany(
+                    """
+                    INSERT INTO ai_question_candidates(
+                        question_candidate_id, build_id, question, cluster_id, intent,
+                        proposed_target_page, transformation_method, source_keyword_ids,
+                        source_candidate_ids, decision, decision_reason, reviewed_by,
+                        reviewed_at, created_at, updated_at,
+                        source_type, source_reference, source_evidence_refs_json,
+                        persona, situation, decision_to_make, constraints_json,
+                        expected_answer_elements_json, naturalness_status, distinctness_status,
+                        safety_status, pilot_status, pilot_results_json, pilot_override_by,
+                        pilot_override_at, pilot_override_reason, llm_assessment_id,
+                        review_stage, family_bucket, human_validated_hypothesis
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    values,
+                )
+            else:
+                conn.executemany(
+                    """
+                    INSERT INTO ai_question_candidates(
+                        question_candidate_id, build_id, question, cluster_id, intent,
+                        proposed_target_page, transformation_method, source_keyword_ids,
+                        source_candidate_ids, decision, decision_reason, reviewed_by,
+                        reviewed_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [v[:15] for v in values],
+                )
 
     def insert_ai_question_sources(self, rows: Sequence[Dict[str, Any]]) -> None:
         if not rows:
@@ -1201,13 +1404,41 @@ class TrackingStore:
             "updated_at",
             "source_keyword_ids",
             "source_candidate_ids",
+            "source_type",
+            "source_reference",
+            "source_evidence_refs_json",
+            "persona",
+            "situation",
+            "decision_to_make",
+            "constraints_json",
+            "expected_answer_elements_json",
+            "naturalness_status",
+            "distinctness_status",
+            "safety_status",
+            "pilot_status",
+            "pilot_results_json",
+            "pilot_override_by",
+            "pilot_override_at",
+            "pilot_override_reason",
+            "llm_assessment_id",
+            "review_stage",
+            "family_bucket",
+            "human_validated_hypothesis",
+        }
+        json_fields = {
+            "source_keyword_ids",
+            "source_candidate_ids",
+            "source_evidence_refs_json",
+            "constraints_json",
+            "expected_answer_elements_json",
+            "pilot_results_json",
         }
         assignments = []
         values: List[Any] = []
         for key, value in fields.items():
             if key not in allowed:
                 raise SchemaMismatchError(f"Unsupported ai_question_candidate field: {key}")
-            if key in {"source_keyword_ids", "source_candidate_ids"} and value is not None:
+            if key in json_fields and value is not None:
                 value = json.dumps(value, sort_keys=True)
             assignments.append(f"{key} = ?")
             values.append(value)
@@ -1216,6 +1447,40 @@ class TrackingStore:
             conn.execute(
                 f"UPDATE ai_question_candidates SET {', '.join(assignments)} WHERE question_candidate_id = ?",
                 values,
+            )
+
+    def insert_llm_assessment(self, row: Dict[str, Any]) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO llm_assessments(
+                    assessment_id, assessment_type, subject_type, subject_id, build_id,
+                    prompt_version, provider, model, input_fingerprint,
+                    input_evidence_refs_json, redacted_input_json, output_json,
+                    validation_status, validation_errors_json, cost_usd, latency_ms, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["assessment_id"],
+                    row["assessment_type"],
+                    row["subject_type"],
+                    row["subject_id"],
+                    row.get("build_id"),
+                    row["prompt_version"],
+                    row["provider"],
+                    row["model"],
+                    row["input_fingerprint"],
+                    json.dumps(row.get("input_evidence_refs_json") or [], sort_keys=True),
+                    json.dumps(row.get("redacted_input_json") or {}, sort_keys=True),
+                    json.dumps(row.get("output_json"), sort_keys=True)
+                    if row.get("output_json") is not None
+                    else None,
+                    row["validation_status"],
+                    json.dumps(row.get("validation_errors_json") or [], sort_keys=True),
+                    float(row.get("cost_usd") or 0),
+                    row.get("latency_ms"),
+                    row["created_at"],
+                ),
             )
 
     def insert_catalogue_comparisons(self, rows: Sequence[Dict[str, Any]]) -> None:

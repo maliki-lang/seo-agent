@@ -78,12 +78,51 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.set_defaults(handler="baseline")
 
     opportunities = sub.add_parser(
-        "opportunities", parents=[shared], help="Score evidence-backed SEO/GEO opportunities"
+        "opportunities", parents=[shared], help="Multi-signal SEO/GEO opportunity intelligence"
     )
-    opportunities.add_argument("--end-date")
-    opportunities.add_argument("--report-id")
-    opportunities.add_argument("--limit", type=int, default=10)
-    opportunities.set_defaults(handler="opportunities")
+    opp_sub = opportunities.add_subparsers(dest="opportunities_command", required=True)
+
+    opp_build = opp_sub.add_parser(
+        "build",
+        parents=[shared],
+        help="Build constrained top-ten action portfolio (Phase 15)",
+    )
+    opp_build.add_argument("--catalogue-version", help="Activated keyword catalogue version")
+    opp_build.add_argument("--build-id", help="Selected keyword candidate build_id")
+    opp_build.add_argument("--period-end")
+    opp_build.add_argument("--limit", type=int, default=10)
+    opp_build.add_argument("--llm-assist", action="store_true")
+    opp_build.add_argument("--report-id")
+    opp_build.add_argument("--owner", default="seo-agent")
+    opp_build.set_defaults(handler="opportunities_build")
+
+    opp_export = opp_sub.add_parser(
+        "export-review",
+        parents=[shared],
+        help="Export opportunity review CSV",
+    )
+    opp_export.add_argument("--report-id", required=True)
+    opp_export.add_argument("--output", required=True)
+    opp_export.set_defaults(handler="opportunities_export_review")
+
+    opp_import = opp_sub.add_parser(
+        "import-decisions",
+        parents=[shared],
+        help="Import opportunity reviewer decisions from CSV",
+    )
+    opp_import.add_argument("--report-id", required=True)
+    opp_import.add_argument("--input", required=True)
+    opp_import.set_defaults(handler="opportunities_import_decisions")
+
+    opp_legacy = opp_sub.add_parser(
+        "score-v1",
+        parents=[shared],
+        help="Legacy Phase 5 opportunity scorer (keyword-centric)",
+    )
+    opp_legacy.add_argument("--end-date")
+    opp_legacy.add_argument("--report-id")
+    opp_legacy.add_argument("--limit", type=int, default=10)
+    opp_legacy.set_defaults(handler="opportunities_score_v1")
 
     weekly = sub.add_parser("weekly", parents=[shared], help="Generate weekly report")
     weekly.add_argument("--period-end")
@@ -296,7 +335,72 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Hard-require Serper validation on every selected primary",
     )
+    select_portfolio.add_argument(
+        "--require-llm-semantics",
+        action="store_true",
+        help="Only select family primaries with valid mid-funnel LLM pool_semantic authority",
+    )
     select_portfolio.set_defaults(handler="catalogue_select_portfolio")
+
+    assess_llm = catalogue_sub.add_parser(
+        "assess-llm",
+        parents=[shared],
+        help="Run mandatory non-authoritative LLM assessment (supports --dry-run)",
+    )
+    assess_llm.add_argument("--build-id", required=True)
+    assess_llm.add_argument(
+        "--assessment-type",
+        required=True,
+        choices=[
+            "semantic_review",
+            "pool_semantic",
+            "question_rewrite",
+            "answer_rubric",
+            "opportunity_diagnosis",
+        ],
+    )
+    assess_llm.add_argument(
+        "--scope",
+        default="eligible_nonbrand",
+        help=(
+            "reviewed_shortlist|alternates|eligible_pool|eligible_nonbrand|preselected_pool "
+            "(default eligible_nonbrand for mid-funnel pool_semantic)"
+        ),
+    )
+    assess_llm.add_argument("--limit", type=int, default=55)
+    assess_llm.add_argument("--dry-run", action="store_true")
+    assess_llm.add_argument("--provider", default="openai")
+    assess_llm.add_argument("--model", default="")
+    assess_llm.set_defaults(handler="catalogue_assess_llm")
+
+    pilot_q = catalogue_sub.add_parser(
+        "pilot-ai-questions",
+        parents=[shared],
+        help="One-repetition AI-question pilot before production measurement",
+    )
+    pilot_q.add_argument("--question-build-id", required=True)
+    pilot_q.add_argument("--engines", default="chatgpt,perplexity")
+    pilot_q.add_argument("--repetitions", type=int, default=1)
+    pilot_q.add_argument("--limit", type=int, default=30)
+    pilot_q.set_defaults(handler="catalogue_pilot_ai_questions")
+
+    export_q_review = catalogue_sub.add_parser(
+        "export-question-review",
+        parents=[shared],
+        help="Export AI-question review CSV with source/pilot/gate fields",
+    )
+    export_q_review.add_argument("--question-build-id", required=True)
+    export_q_review.add_argument("--output", required=True)
+    export_q_review.set_defaults(handler="catalogue_export_question_review")
+
+    q_check = catalogue_sub.add_parser(
+        "check-questions",
+        parents=[shared],
+        help="Run Phase 14 AI-question quality gates",
+    )
+    q_check.add_argument("--question-build-id", required=True)
+    q_check.add_argument("--question-count", type=int, default=20)
+    q_check.set_defaults(handler="catalogue_check_questions")
     return parser
 
 
@@ -377,14 +481,50 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _print(payload, as_json)
             return 0
         if args.command == "opportunities":
-            end = parse_date(args.end_date) if args.end_date else None
-            payload = runner.build_opportunities(
-                report_id=args.report_id,
-                end_date=end,
-                limit=args.limit,
-            )
-            _print(payload, as_json)
-            return 0
+            if args.opportunities_command == "build":
+                from .opportunities import build_opportunity_portfolio
+
+                end = parse_date(args.period_end) if args.period_end else None
+                payload = build_opportunity_portfolio(
+                    runner.store,
+                    config,
+                    catalogue_version=args.catalogue_version,
+                    build_id=args.build_id,
+                    period_end=end,
+                    limit=args.limit,
+                    llm_assist=bool(args.llm_assist),
+                    owner=args.owner,
+                    report_id=args.report_id,
+                )
+                _print(payload, as_json)
+                return 0 if (payload.get("gates") or {}).get("gate_status") != "failed" else 2
+            if args.opportunities_command == "export-review":
+                from .opportunities import export_opportunity_review
+
+                payload = export_opportunity_review(
+                    runner.store, report_id=args.report_id, output=args.output
+                )
+                _print(payload, as_json)
+                return 0
+            if args.opportunities_command == "import-decisions":
+                from .opportunities import import_opportunity_decisions
+
+                payload = import_opportunity_decisions(
+                    runner.store, report_id=args.report_id, input_path=args.input
+                )
+                _print(payload, as_json)
+                return 0
+            if args.opportunities_command == "score-v1":
+                end = parse_date(args.end_date) if args.end_date else None
+                payload = runner.build_opportunities(
+                    report_id=args.report_id,
+                    end_date=end,
+                    limit=args.limit,
+                )
+                _print(payload, as_json)
+                return 0
+            parser.error(f"Unhandled opportunities command {args.opportunities_command}")
+            return 2
         if args.command == "weekly":
             end = parse_date(args.period_end) if args.period_end else None
             publish = bool(args.publish) and not bool(args.no_publish)
@@ -401,6 +541,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from .catalogue.clusters import derive_clusters
             from .catalogue.compare import compare_with_provisional
             from .catalogue.enrich import enrich_build_with_ga4
+            from .catalogue.question_pilot import pilot_ai_questions
+            from .catalogue.question_review import evaluate_question_gates, export_question_review
             from .catalogue.questions import build_ai_questions
             from .catalogue.validate_serp import validate_serp_for_build
             from .catalogue.workflow import (
@@ -411,6 +553,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             from .catalogue.report import write_provenance_report
             from .checks.catalogue_checks import CatalogueQualitySuite
+            from .llm.assess import assess_subjects
 
             if args.catalogue_command == "build-keywords":
                 payload = build_keyword_catalogue(
@@ -467,6 +610,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     config,
                     build_id=args.build_id,
                     require_serper=True if args.require_serper else None,
+                    require_llm_semantics=bool(args.require_llm_semantics),
                 )
                 _print(payload, as_json)
                 gate = (payload.get("quality_gate") or {}).get("gate_status")
@@ -587,6 +731,51 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 payload = get_candidate_lineage(runner.store, args.candidate_id)
                 _print(payload, as_json)
                 return 0
+            if args.catalogue_command == "assess-llm":
+                payload = assess_subjects(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    assessment_type=args.assessment_type,
+                    scope=args.scope,
+                    limit=args.limit,
+                    dry_run=bool(args.dry_run),
+                    provider=args.provider,
+                    model=args.model or None,
+                    cost_ledger=runner.costs,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "pilot-ai-questions":
+                engines = [e.strip() for e in (args.engines or "").split(",") if e.strip()]
+                payload = pilot_ai_questions(
+                    runner.store,
+                    config,
+                    question_build_id=args.question_build_id,
+                    engines=engines,
+                    repetitions=args.repetitions,
+                    limit=args.limit,
+                    cost_ledger=runner.costs,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "export-question-review":
+                payload = export_question_review(
+                    runner.store,
+                    question_build_id=args.question_build_id,
+                    output=args.output,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "check-questions":
+                payload = evaluate_question_gates(
+                    runner.store,
+                    config,
+                    question_build_id=args.question_build_id,
+                    production_count=args.question_count,
+                )
+                _print(payload, as_json)
+                return 0 if payload.get("gate_status") != "failed" else 2
             parser.error(f"Unhandled catalogue command {args.catalogue_command}")
             return 2
         parser.error(f"Unhandled command {args.command}")

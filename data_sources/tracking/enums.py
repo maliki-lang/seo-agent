@@ -85,6 +85,44 @@ class OpportunityCategory(str, Enum):
     GEO = "geo"
 
 
+class OpportunityActionType(str, Enum):
+    TITLE_META_REWRITE = "title_meta_rewrite"
+    INTERNAL_LINKING = "internal_linking"
+    ANSWER_SECTION = "answer_section"
+    CONTENT_EXPANSION = "content_expansion"
+    PRODUCT_MAPPING = "product_mapping"
+    CONTENT_CONSOLIDATION = "content_consolidation"
+    TECHNICAL_FIX = "technical_fix"
+    NEW_PAGE = "new_page"
+    GEO_EVIDENCE_UPGRADE = "geo_evidence_upgrade"
+    MANUAL_INVESTIGATION = "manual_investigation"
+
+
+class OpportunitySourceType(str, Enum):
+    CTR_UNDERPERFORMANCE = "ctr_underperformance"
+    RANKING_IMPROVEMENT = "ranking_improvement"
+    PAGE_ONE_UNDERPERFORMANCE = "page_one_underperformance"
+    CANNIBALIZATION = "cannibalization"
+    WRONG_TARGET = "wrong_target"
+    TRAFFIC_TO_COMMERCE_GAP = "traffic_to_commerce_gap"
+    EXISTING_PAGE_EXPANSION = "existing_page_expansion"
+    NEW_PAGE_GAP = "new_page_gap"
+    GEO_EVIDENCE_GAP = "geo_evidence_gap"
+    TECHNICAL_MANUAL = "technical_manual"
+    SOURCE_BLOCKED = "source_blocked"
+
+
+class OpportunityReviewStatus(str, Enum):
+    PENDING = "pending"
+    AWAITING_LLM_DIAGNOSIS = "awaiting_llm_diagnosis"
+    DIAGNOSED = "diagnosed"
+    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    DEFERRED = "deferred"
+    BLOCKED = "blocked"
+
+
 class CatalogueBuildType(str, Enum):
     KEYWORD = "keyword"
     AI_QUESTION = "ai_question"
@@ -220,3 +258,63 @@ class CollectorStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class LlmAssessmentType(str, Enum):
+    SEMANTIC_REVIEW = "semantic_review"
+    POOL_SEMANTIC = "pool_semantic"
+    QUESTION_REWRITE = "question_rewrite"
+    ANSWER_RUBRIC = "answer_rubric"
+    OPPORTUNITY_DIAGNOSIS = "opportunity_diagnosis"
+
+
+class SemanticAuthority(str, Enum):
+    LLM = "llm"
+    DETERMINISTIC_FALLBACK = "deterministic_fallback"
+    AWAITING_LLM = "awaiting_llm"
+    LLM_INVALID = "llm_invalid"
+
+
+class LlmValidationStatus(str, Enum):
+    VALID = "valid"
+    INVALID = "invalid"
+    REJECTED = "rejected"
+
+
+class LlmReviewStage(str, Enum):
+    EVIDENCE_READY = "evidence_ready"
+    AWAITING_LLM_ASSESSMENT = "awaiting_llm_assessment"
+    LLM_ASSESSED = "llm_assessed"
+    ASSESSMENT_VALIDATED = "assessment_validated"
+    LLM_OUTPUT_INVALID = "llm_output_invalid"
+    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class QuestionSourceType(str, Enum):
+    GSC_QUESTION_QUERY = "gsc_question_query"
+    APPROVED_KEYWORD_FAMILY = "approved_keyword_family"
+    CUSTOMER_SUPPORT = "customer_support"
+    SITE_SEARCH = "site_search"
+    PRODUCT_REVIEW = "product_review"
+    PEOPLE_ALSO_ASK = "people_also_ask"
+    COMPETITOR_FAQ = "competitor_faq"
+    BUSINESS_NOMINATED = "business_nominated"
+    SYNTHETIC_TEMPLATE = "synthetic_template"
+    LLM_REWRITE = "llm_rewrite"
+    SYNTHETIC_DRAFT = "synthetic_draft"
+    SOURCE_BLOCKED = "source_blocked"
+
+
+class QuestionGateStatus(str, Enum):
+    PENDING = "pending"
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+class PilotStatus(str, Enum):
+    NOT_RUN = "not_run"
+    PASSED = "passed"
+    FAILED = "failed"
+    INCONCLUSIVE = "inconclusive"

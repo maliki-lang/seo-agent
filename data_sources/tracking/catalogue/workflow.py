@@ -115,6 +115,18 @@ def export_review(
         "serp_opportunity_score",
         "serp_target_alignment_score",
         "score_confidence",
+        # Phase 14b mid-funnel LLM semantics
+        "semantic_authority",
+        "llm_intent",
+        "llm_business_relevance",
+        "llm_customer_need",
+        "llm_family_key",
+        "llm_is_representative",
+        "llm_actionability",
+        "llm_recommended_target_page",
+        "llm_no_suitable_target",
+        "llm_semantic_confidence",
+        "family_method",
     ]
     rows_out: List[Dict[str, Any]] = []
     for cand_row in store.fetchall(
@@ -201,6 +213,21 @@ def export_review(
                 if cand["serp_target_alignment_score"] is not None
                 else "",
                 "score_confidence": cand["score_confidence"] if cand["score_confidence"] is not None else "",
+                "semantic_authority": cand.get("semantic_authority") or "",
+                "llm_intent": cand.get("llm_intent") or "",
+                "llm_business_relevance": cand.get("llm_business_relevance") or "",
+                "llm_customer_need": cand.get("llm_customer_need") or "",
+                "llm_family_key": cand.get("llm_family_key") or "",
+                "llm_is_representative": (
+                    ""
+                    if cand.get("llm_is_representative") is None
+                    else int(cand.get("llm_is_representative") or 0)
+                ),
+                "llm_actionability": cand.get("llm_actionability") or "",
+                "llm_recommended_target_page": cand.get("llm_recommended_target_page") or "",
+                "llm_no_suitable_target": int(cand.get("llm_no_suitable_target") or 0),
+                "llm_semantic_confidence": cand.get("llm_semantic_confidence") or "",
+                "family_method": cand.get("family_method") or "",
             }
         )
     if q_build:
@@ -262,6 +289,17 @@ def export_review(
                     "serp_opportunity_score": "",
                     "serp_target_alignment_score": "",
                     "score_confidence": "",
+                    "semantic_authority": "",
+                    "llm_intent": "",
+                    "llm_business_relevance": "",
+                    "llm_customer_need": "",
+                    "llm_family_key": "",
+                    "llm_is_representative": "",
+                    "llm_actionability": "",
+                    "llm_recommended_target_page": "",
+                    "llm_no_suitable_target": "",
+                    "llm_semantic_confidence": "",
+                    "family_method": "",
                 }
             )
 
@@ -439,6 +477,18 @@ def approve_catalogue(
     for q in selected_q:
         if not q["cluster_id"]:
             raise DataQualityError(f"Question {q['question_candidate_id']} missing cluster_id")
+
+    from .question_review import evaluate_question_gates
+
+    q_gates = evaluate_question_gates(
+        store, config, question_build_id=q_build, production_count=question_count
+    )
+    if q_gates.get("gate_status") == "failed":
+        raise DataQualityError(
+            f"AI-question quality gate failed "
+            f"(critical={q_gates.get('critical_failures')}, errors={q_gates.get('error_failures')}); "
+            "complete LLM assessment, pilot, and review before approve"
+        )
 
     # Mark clusters reviewed/approved for this build.
     now = utc_now_iso()
