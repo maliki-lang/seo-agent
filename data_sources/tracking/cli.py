@@ -130,6 +130,67 @@ def build_parser() -> argparse.ArgumentParser:
     weekly.add_argument("--no-publish", action="store_true")
     weekly.set_defaults(handler="weekly")
 
+    experiments = sub.add_parser(
+        "experiments", parents=[shared], help="Phase 16 experiment ledger"
+    )
+    exp_sub = experiments.add_subparsers(dest="experiments_command", required=True)
+
+    exp_create = exp_sub.add_parser(
+        "create", parents=[shared], help="Create experiment from approved opportunity"
+    )
+    exp_create.add_argument("--opportunity-id", required=True)
+    exp_create.add_argument("--approved-by", required=True)
+    exp_create.add_argument("--owner", required=True)
+    exp_create.add_argument("--hypothesis")
+    exp_create.add_argument("--control-pages", help="Comma-separated control page URLs")
+    exp_create.add_argument("--planned-publish-at")
+    exp_create.add_argument("--cost-currency")
+    exp_create.add_argument("--homepage-approved-reason")
+    exp_create.add_argument("--supersedes-experiment-id")
+    exp_create.set_defaults(handler="experiments_create")
+
+    exp_pub = exp_sub.add_parser(
+        "record-publication", parents=[shared], help="Record external publication evidence"
+    )
+    exp_pub.add_argument("--experiment-id", required=True)
+    exp_pub.add_argument("--published-at", required=True)
+    exp_pub.add_argument("--before-hash", required=True)
+    exp_pub.add_argument("--after-hash", required=True)
+    exp_pub.add_argument("--implementation-reference", required=True)
+    exp_pub.add_argument("--changes-json", required=True, help="Path to JSON list of changes")
+    exp_pub.set_defaults(handler="experiments_record_publication")
+
+    exp_cost = exp_sub.add_parser("add-cost", parents=[shared], help="Add experiment cost row")
+    exp_cost.add_argument("--experiment-id", required=True)
+    exp_cost.add_argument("--cost-type", required=True)
+    exp_cost.add_argument("--quantity", type=float, required=True)
+    exp_cost.add_argument("--unit-cost", type=float, required=True)
+    exp_cost.add_argument("--currency")
+    exp_cost.add_argument("--incurred-at")
+    exp_cost.add_argument("--evidence-reference")
+    exp_cost.add_argument("--notes")
+    exp_cost.add_argument("--conversion-rate", type=float)
+    exp_cost.add_argument("--conversion-rate-date")
+    exp_cost.set_defaults(handler="experiments_add_cost")
+
+    exp_measure = exp_sub.add_parser(
+        "measure", parents=[shared], help="Measure experiment at a checkpoint"
+    )
+    exp_measure.add_argument("--experiment-id", required=True)
+    exp_measure.add_argument("--checkpoint", type=int, required=True, choices=[14, 28, 56])
+    exp_measure.add_argument("--as-of-date", required=True)
+    exp_measure.add_argument("--force", action="store_true")
+    exp_measure.add_argument("--audit-reason")
+    exp_measure.set_defaults(handler="experiments_measure")
+
+    exp_list = exp_sub.add_parser("list", parents=[shared], help="List experiments")
+    exp_list.add_argument("--status")
+    exp_list.set_defaults(handler="experiments_list")
+
+    exp_show = exp_sub.add_parser("show", parents=[shared], help="Show experiment detail")
+    exp_show.add_argument("--experiment-id", required=True)
+    exp_show.set_defaults(handler="experiments_show")
+
     catalogue = sub.add_parser("catalogue", parents=[shared], help="Catalogue provenance commands")
     catalogue_sub = catalogue.add_subparsers(dest="catalogue_command", required=True)
 
@@ -368,6 +429,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     assess_llm.add_argument("--limit", type=int, default=55)
+    assess_llm.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallel OpenAI workers for assessment (default 1; try 10–20 for large pools)",
+    )
     assess_llm.add_argument("--dry-run", action="store_true")
     assess_llm.add_argument("--provider", default="openai")
     assess_llm.add_argument("--model", default="")
@@ -516,7 +583,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 return 0
             if args.opportunities_command == "score-v1":
                 end = parse_date(args.end_date) if args.end_date else None
-                payload = runner.build_opportunities(
+                payload = runner.build_opportunities_v1(
                     report_id=args.report_id,
                     end_date=end,
                     limit=args.limit,
@@ -531,6 +598,96 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             payload = runner.generate_weekly(period_end=end, publish=publish)
             _print(payload, as_json)
             return 0 if payload.get("status") != "failed" else 2
+        if args.command == "experiments":
+            from datetime import datetime
+            from pathlib import Path
+
+            from .experiments import (
+                add_experiment_cost,
+                create_experiment_from_opportunity,
+                get_experiment,
+                list_experiments,
+                measure_experiment,
+                record_publication,
+            )
+
+            if args.experiments_command == "create":
+                controls = None
+                if args.control_pages:
+                    controls = [p.strip() for p in args.control_pages.split(",") if p.strip()]
+                planned = parse_date(args.planned_publish_at) if args.planned_publish_at else None
+                payload = create_experiment_from_opportunity(
+                    runner.store,
+                    config,
+                    opportunity_id=args.opportunity_id,
+                    approved_by=args.approved_by,
+                    owner=args.owner,
+                    hypothesis=args.hypothesis,
+                    control_pages=controls,
+                    planned_publish_at=planned,
+                    cost_currency=args.cost_currency,
+                    homepage_approved_reason=args.homepage_approved_reason,
+                    supersedes_experiment_id=args.supersedes_experiment_id,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.experiments_command == "record-publication":
+                changes_path = Path(args.changes_json).expanduser()
+                changes = json.loads(changes_path.read_text(encoding="utf-8"))
+                if not isinstance(changes, list):
+                    raise ConfigurationError("changes-json must be a JSON list")
+                published_at = datetime.fromisoformat(args.published_at)
+                payload = record_publication(
+                    runner.store,
+                    config,
+                    experiment_id=args.experiment_id,
+                    published_at=published_at,
+                    content_before_hash=args.before_hash,
+                    content_after_hash=args.after_hash,
+                    implementation_reference=args.implementation_reference,
+                    changes=changes,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.experiments_command == "add-cost":
+                payload = add_experiment_cost(
+                    runner.store,
+                    config,
+                    experiment_id=args.experiment_id,
+                    cost_type=args.cost_type,
+                    quantity=args.quantity,
+                    unit_cost=args.unit_cost,
+                    currency=args.currency,
+                    incurred_at=args.incurred_at,
+                    evidence_reference=args.evidence_reference,
+                    notes=args.notes,
+                    conversion_rate=args.conversion_rate,
+                    conversion_rate_date=args.conversion_rate_date,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.experiments_command == "measure":
+                payload = measure_experiment(
+                    runner.store,
+                    config,
+                    experiment_id=args.experiment_id,
+                    checkpoint_days=args.checkpoint,
+                    as_of_date=parse_date(args.as_of_date),
+                    force=bool(args.force),
+                    audit_reason=args.audit_reason,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.experiments_command == "list":
+                payload = list_experiments(runner.store, status=args.status)
+                _print(payload, as_json)
+                return 0
+            if args.experiments_command == "show":
+                payload = get_experiment(runner.store, experiment_id=args.experiment_id)
+                _print(payload, as_json)
+                return 0
+            parser.error(f"Unhandled experiments command {args.experiments_command}")
+            return 2
         if args.command == "catalogue":
             from .catalogue.builder import build_keyword_catalogue, get_candidate_lineage
             from .catalogue.classify import classify_build
@@ -743,6 +900,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     provider=args.provider,
                     model=args.model or None,
                     cost_ledger=runner.costs,
+                    workers=int(getattr(args, "workers", 1) or 1),
                 )
                 _print(payload, as_json)
                 return 0

@@ -121,6 +121,47 @@ class OpportunityReviewStatus(str, Enum):
     REJECTED = "rejected"
     DEFERRED = "deferred"
     BLOCKED = "blocked"
+    CONVERTED_TO_EXPERIMENT = "converted_to_experiment"
+
+
+class ExperimentStatus(str, Enum):
+    DRAFT = "draft"
+    APPROVED = "approved"
+    IMPLEMENTING = "implementing"
+    PUBLISHED = "published"
+    MEASURING = "measuring"
+    WINNER = "winner"
+    LIKELY_WINNER = "likely_winner"
+    INCONCLUSIVE = "inconclusive"
+    LIKELY_LOSS = "likely_loss"
+    TRACKING_FAILURE = "tracking_failure"
+    CLOSED = "closed"
+
+
+class ExperimentCostType(str, Enum):
+    MODEL_API = "model_api"
+    ENGINEERING = "engineering"
+    WRITING = "writing"
+    EDITING = "editing"
+    REVIEW = "review"
+    SEO_TOOL = "seo_tool"
+    CONTRACTOR = "contractor"
+    OTHER = "other"
+
+
+class ExperimentOutcome(str, Enum):
+    WINNER = "winner"
+    LIKELY_WINNER = "likely_winner"
+    INCONCLUSIVE = "inconclusive"
+    LIKELY_LOSS = "likely_loss"
+    TRACKING_FAILURE = "tracking_failure"
+    PROVISIONAL = "provisional"
+
+
+class CounterfactualMethod(str, Enum):
+    MATCHED_CONTROLS = "matched_controls"
+    SITEWIDE_ADJUSTED = "sitewide_adjusted"
+    BEFORE_AFTER = "before_after"
 
 
 class CatalogueBuildType(str, Enum):

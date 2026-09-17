@@ -140,3 +140,13 @@ tracking:
       unresolved_target_page: 0.15
     # Legacy flat list ignored when relevance: is present.
     relevance_terms: []
+  economics:
+    default_currency: SGD
+    max_cost_per_incremental_click: null
+    minimum_incremental_clicks: 1
+    minimum_priority_score: 0.01
+    minimum_experiments_for_learning: 5
+    cannibalization_min_impressions: 20
+    cannibalization_min_distinct_urls: 2
+    winner_min_lift_pct: 0.15
+    gsc_complete_lag_days: 3

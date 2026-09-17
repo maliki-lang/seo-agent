@@ -1,8 +1,9 @@
-"""Opportunity quality gates (Phase 15)."""
+"""Opportunity quality gates (Phase 15/16)."""
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -10,6 +11,13 @@ from ..enums import OpportunityReviewStatus
 from ..storage import TrackingStore
 from ..transforms.normalize import utc_now_iso
 from .impact import recalculate_priority
+from .targets import (
+    DIAGNOSTIC_ACTIONS,
+    canonicalize_target_url,
+    homepage_explicitly_approved,
+    is_homepage_target,
+    is_http_target,
+)
 
 
 def _load_json(value: Any, default: Any) -> Any:
@@ -33,7 +41,13 @@ def _sunnystep_url(url: str) -> bool:
     )
 
 
-def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[str, Any]:
+def evaluate_opportunity_gates(
+    store: TrackingStore,
+    *,
+    report_id: str,
+    minimum_incremental_clicks: float = 1.0,
+    minimum_priority_score: float = 0.01,
+) -> Dict[str, Any]:
     rows = [
         dict(r)
         for r in store.fetchall(
@@ -68,12 +82,23 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
     )
 
     bad_targets = []
+    http_targets = []
+    homepage_blocked = []
     for r in rows:
         page = r.get("target_page") or ""
         status = r.get("target_page_status") or ""
         if r.get("action_type") == "new_page":
             continue
-        if page and not _sunnystep_url(page) and status not in {"manual_review", "approved_new_page"}:
+        if page and is_http_target(page):
+            http_targets.append(r["opportunity_id"])
+        if page and is_homepage_target(page) and not homepage_explicitly_approved(r):
+            homepage_blocked.append(r["opportunity_id"])
+        canonical = canonicalize_target_url(page) if page else ""
+        check_page = canonical or page
+        if check_page and not _sunnystep_url(check_page) and status not in {
+            "manual_review",
+            "approved_new_page",
+        }:
             bad_targets.append(r["opportunity_id"])
         if not page and status not in {"approved_new_page", "manual_review", "no_sensible_target"}:
             bad_targets.append(r["opportunity_id"])
@@ -83,6 +108,20 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
         level="critical",
         observed={"invalid": len(bad_targets)},
         details={"ids": bad_targets[:20]},
+    )
+    _check(
+        "https_canonical_targets",
+        ok=not http_targets,
+        level="critical",
+        observed={"http_targets": len(http_targets)},
+        details={"ids": http_targets[:20]},
+    )
+    _check(
+        "homepage_explicit_approval",
+        ok=not homepage_blocked,
+        level="critical",
+        observed={"blocked_homepages": len(homepage_blocked)},
+        details={"ids": homepage_blocked[:20]},
     )
 
     incomplete = [
@@ -98,11 +137,11 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
         details={"ids": incomplete[:20]},
     )
 
-    # Duplicate page+action pairs among selected
     seen = {}
     dups = []
     for r in rows:
-        key = ((r.get("target_page") or "").lower(), r.get("action_type") or "")
+        page = canonicalize_target_url(r.get("target_page") or "") or (r.get("target_page") or "")
+        key = (page.lower(), r.get("action_type") or "")
         if key in seen and key[0]:
             dups.append(r["opportunity_id"])
         seen[key] = r["opportunity_id"]
@@ -119,7 +158,8 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
         for r in rows
         if r.get("category") == "seo"
         and r.get("expected_incremental_clicks") is None
-        and r.get("action_type") not in {"manual_investigation", "product_mapping"}
+        and r.get("action_type") not in DIAGNOSTIC_ACTIONS
+        and r.get("action_type") != "geo_evidence_upgrade"
     ]
     _check(
         "raw_impact_preservation",
@@ -127,6 +167,37 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
         level="critical",
         observed={"missing_raw_gain": len(missing_raw)},
         details={"ids": missing_raw[:20]},
+    )
+
+    weak_impact = []
+    for r in rows:
+        action = r.get("action_type") or ""
+        if action in DIAGNOSTIC_ACTIONS:
+            continue
+        if r.get("category") == "geo":
+            continue
+        clicks = r.get("expected_incremental_clicks")
+        if clicks is None or float(clicks) < float(minimum_incremental_clicks):
+            weak_impact.append(r["opportunity_id"])
+    _check(
+        "minimum_incremental_clicks",
+        ok=not weak_impact,
+        level="critical",
+        observed={"below_minimum": len(weak_impact), "threshold": minimum_incremental_clicks},
+        details={"ids": weak_impact[:20]},
+    )
+
+    low_priority = [
+        r["opportunity_id"]
+        for r in rows
+        if float(r.get("priority_score") or 0) < float(minimum_priority_score)
+    ]
+    _check(
+        "minimum_priority_score",
+        ok=not low_priority,
+        level="critical",
+        observed={"below_minimum": len(low_priority), "threshold": minimum_priority_score},
+        details={"ids": low_priority[:20]},
     )
 
     bad_priority = []
@@ -143,13 +214,45 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
         details={"ids": bad_priority[:20]},
     )
 
-    # Portfolio size soft check
+    # Soft upper bound only — portfolios may be smaller than ten.
     _check(
         "portfolio_constraints",
         ok=len(rows) <= 10,
         level="error",
         observed={"selected": len(rows)},
+        details={"note": "up_to_ten_not_fill_ten"},
+    )
+
+    source_counts = Counter(r.get("source_type") or "" for r in rows)
+    concentration = None
+    if rows:
+        top_source, top_count = source_counts.most_common(1)[0]
+        share = top_count / len(rows)
+        if share > 0.40:
+            concentration = {"source_type": top_source, "share": round(share, 4), "count": top_count}
+    _check(
+        "source_concentration",
+        ok=concentration is None,
+        level="warning",
+        observed=concentration or {"ok": True},
         details={},
+    )
+
+    cannibal_weak = []
+    for r in rows:
+        if r.get("source_type") != "cannibalization":
+            continue
+        evidence = _load_json(r.get("supporting_evidence_json"), {})
+        url_count = int(evidence.get("distinct_url_count") or len(evidence.get("distinct_sunnystep_urls") or []))
+        impressions = int(evidence.get("impressions") or 0)
+        if url_count < 2 or impressions < 20:
+            cannibal_weak.append(r["opportunity_id"])
+    _check(
+        "cannibalization_evidence",
+        ok=not cannibal_weak,
+        level="critical",
+        observed={"weak": len(cannibal_weak)},
+        details={"ids": cannibal_weak[:20]},
     )
 
     awaiting_llm = [
@@ -170,7 +273,6 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
         details={"ids": (awaiting_llm + invalid_llm)[:20]},
     )
 
-    # Human approval is enforced at experiment creation (Phase 16), not at build time.
     unapproved = [
         r["opportunity_id"]
         for r in rows
@@ -185,7 +287,6 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
     )
 
     critical_fail = any(not c["ok"] and c["level"] == "critical" for c in checks)
-    # llm_diagnosis_validity is only critical when llm was requested; if all are awaiting_human_review without llm ids, pass.
     if all(
         (r.get("review_status") or "")
         in {
@@ -193,10 +294,11 @@ def evaluate_opportunity_gates(store: TrackingStore, *, report_id: str) -> Dict[
             OpportunityReviewStatus.APPROVED.value,
             OpportunityReviewStatus.REJECTED.value,
             OpportunityReviewStatus.PENDING.value,
+            OpportunityReviewStatus.DEFERRED.value,
+            OpportunityReviewStatus.CONVERTED_TO_EXPERIMENT.value,
         }
         for r in rows
     ) and not any(r.get("blocked_reason") for r in rows):
-        # Recompute critical without treating empty llm as failure when diagnosis not required.
         for c in checks:
             if c["check_name"] == "llm_diagnosis_validity" and not any(r.get("llm_assessment_id") for r in rows):
                 c["ok"] = True

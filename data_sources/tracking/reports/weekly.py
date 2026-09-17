@@ -15,7 +15,6 @@ from ..sinks.lark_base import LarkBaseSink
 from ..storage import TrackingStore
 from ..transforms.normalize import utc_now_iso
 from .metrics_calc import compute_period_metrics
-from .opportunities import OpportunityBuilder
 
 
 class WeeklyReportService:
@@ -76,11 +75,9 @@ class WeeklyReportService:
             if not baseline_id or row["baseline_id"] == baseline_id
         }
 
-        opportunities = OpportunityBuilder(self.config, self.store).build(
-            report_id=report_id,
-            end_date=end,
-            limit=10,
-        )
+        opportunity_block = self._phase15_opportunities(report_id=report_id, end_date=end)
+        opportunities = opportunity_block.get("opportunities") or []
+        experiment_block = self._experiment_sections(as_of=end)
 
         seo_clicks = _num(metric_map.get(("gsc_clicks", "{}")))
         prior_clicks = _num(prior_map.get(("gsc_clicks", "{}")))
@@ -101,6 +98,8 @@ class WeeklyReportService:
             facts.append(f"GSC clicks vs locked baseline {baseline_clicks:.0f}: {seo_clicks - baseline_clicks:+.0f}.")
         if geo_mention not in (None, "None"):
             facts.append(f"Combined GEO mention rate {geo_mention}.")
+        if opportunity_block.get("blocked"):
+            facts.append(f"Opportunity portfolio blocked: {opportunity_block.get('reason')}.")
         if not facts:
             facts.append("Insufficient complete data for period comparisons; treat conclusions as provisional.")
 
@@ -119,6 +118,7 @@ class WeeklyReportService:
                 "prior_week_gsc_clicks": prior_clicks,
                 "weighted_ctr": metric_map.get(("gsc_weighted_ctr", "{}")),
                 "weighted_avg_position": metric_map.get(("gsc_weighted_avg_position", "{}")),
+                "note": "Site-wide observed movement; not attributed experiment impact.",
             },
             "geo_vs_baseline": {
                 "combined_mention_rate": geo_mention,
@@ -156,20 +156,26 @@ class WeeklyReportService:
                 "error_failures": quality.get("error_failures") or [],
                 "warnings": quality.get("warnings") or [],
             },
+            "opportunity_portfolio": opportunity_block,
             "top_actions": [
                 {
-                    "opportunity_id": row["opportunity_id"],
-                    "category": row["category"],
-                    "target_query_or_question": row["target_query_or_question"],
-                    "target_page": row["target_page"],
-                    "proposed_action": row["proposed_action"],
-                    "priority_score": row["priority_score"],
-                    "source_row_references_json": row["source_row_references_json"],
+                    "opportunity_id": row.get("opportunity_id"),
+                    "category": row.get("category") or row.get("source_type"),
+                    "target_query_or_question": row.get("target_query_or_question"),
+                    "target_page": row.get("target_page"),
+                    "proposed_action": row.get("proposed_action"),
+                    "action_type": row.get("action_type"),
+                    "priority_score": row.get("priority_score"),
+                    "expected_incremental_clicks": row.get("expected_incremental_clicks"),
+                    "source_row_references_json": row.get("source_row_references_json"),
+                    "portfolio_rank": row.get("portfolio_rank"),
                 }
                 for row in opportunities
             ],
+            "experiments": experiment_block,
             "baseline_id": baseline_id,
             "opportunity_count": len(opportunities),
+            "opportunity_version": "v2",
         }
 
         status = ReportStatus.DRAFT
@@ -189,6 +195,14 @@ class WeeklyReportService:
             try:
                 result = self.lark_sink.upsert_weekly_summary(summary)
                 self.lark_sink.upsert_opportunities(opportunities)
+                self.lark_sink.upsert_experiments(experiment_block.get("register") or [])
+                self.lark_sink.upsert_experiment_costs(experiment_block.get("costs") or [])
+                self.lark_sink.upsert_experiment_measurements(
+                    experiment_block.get("measurements") or []
+                )
+                self.lark_sink.upsert_experiment_outcomes(
+                    experiment_block.get("outcome_summary") or []
+                )
                 lark_record_id = result["lark_record_id"]
                 status = ReportStatus.PUBLISHED
                 published_at = utc_now_iso()
@@ -231,9 +245,149 @@ class WeeklyReportService:
             "period_end": end.isoformat(),
             "quality_status": summary["quality_status"],
             "opportunity_count": len(opportunities),
+            "opportunity_blocked": bool(opportunity_block.get("blocked")),
+            "experiment_count": len(experiment_block.get("register") or []),
             "lark_record_id": lark_record_id,
             "published": status == ReportStatus.PUBLISHED,
             "summary": summary,
+        }
+
+    def _activated_catalogue_version(self) -> Optional[str]:
+        rows = self.store.fetchall(
+            """
+            SELECT catalogue_version
+            FROM keyword_catalog
+            WHERE active = 1 AND approval_status = 'activated'
+            ORDER BY approved_at DESC
+            LIMIT 1
+            """
+        )
+        if rows:
+            return rows[0]["catalogue_version"]
+        return None
+
+    def _phase15_opportunities(self, *, report_id: str, end_date: date) -> Dict[str, Any]:
+        from ..opportunities.builder import build_opportunity_portfolio
+
+        catalogue_version = self._activated_catalogue_version()
+        if not catalogue_version:
+            return {
+                "blocked": True,
+                "reason": "no_activated_evidence_catalogue",
+                "gate_status": "blocked",
+                "opportunities": [],
+                "blocked_sources": ["opportunity_portfolio_v2"],
+                "note": "Do not fall back to legacy v1 opportunities.",
+            }
+        try:
+            built = build_opportunity_portfolio(
+                self.store,
+                self.config,
+                catalogue_version=catalogue_version,
+                period_end=end_date,
+                limit=10,
+                owner="weekly-report",
+                report_id=f"{report_id}-opp",
+            )
+        except TrackingError as exc:
+            return {
+                "blocked": True,
+                "reason": str(exc),
+                "gate_status": "blocked",
+                "opportunities": [],
+                "blocked_sources": list((getattr(exc, "redacted_detail", None) and []) or []),
+            }
+        rows = [
+            dict(r)
+            for r in self.store.fetchall(
+                "SELECT * FROM opportunities WHERE report_id = ? AND opportunity_version = 'v2'",
+                (built["report_id"],),
+            )
+        ]
+        return {
+            "blocked": False,
+            "catalogue_version": catalogue_version,
+            "report_id": built["report_id"],
+            "gate_status": (built.get("gates") or {}).get("gate_status"),
+            "gates": built.get("gates"),
+            "blocked_detectors": built.get("blocked_detectors") or {},
+            "concentration_warning": built.get("concentration_warning"),
+            "coverage_warning": built.get("coverage_warning"),
+            "opportunities": rows,
+            "selected_count": len(rows),
+        }
+
+    def _experiment_sections(self, *, as_of: date) -> Dict[str, Any]:
+        experiments = [dict(r) for r in self.store.fetchall("SELECT * FROM seo_experiments")]
+        due = {"14": [], "28": [], "56": []}
+        newly_classified = []
+        costs = []
+        measurements = []
+        outcomes = []
+        for exp in experiments:
+            if not exp.get("published_at"):
+                continue
+            published = date.fromisoformat(str(exp["published_at"])[:10])
+            for days in (14, 28, 56):
+                due_date = published + timedelta(days=days)
+                existing = self.store.get_experiment_measurement(exp["experiment_id"], days)
+                if existing:
+                    measurements.append(dict(existing))
+                    if existing["outcome"] not in {"provisional"} and days >= 28:
+                        newly_classified.append(
+                            {
+                                "experiment_id": exp["experiment_id"],
+                                "checkpoint_days": days,
+                                "outcome": existing["outcome"],
+                                "adjusted_incremental_clicks": existing.get(
+                                    "adjusted_incremental_clicks"
+                                ),
+                            }
+                        )
+                elif due_date <= as_of:
+                    due[str(days)].append(
+                        {
+                            "experiment_id": exp["experiment_id"],
+                            "action_type": exp["action_type"],
+                            "target_page": exp["target_page"],
+                            "due_date": due_date.isoformat(),
+                        }
+                    )
+            for cost in self.store.list_experiment_costs(exp["experiment_id"]):
+                costs.append(dict(cost))
+            latest = self.store.list_experiment_measurements(exp["experiment_id"])
+            if latest:
+                last = dict(latest[-1])
+                incr = last.get("adjusted_incremental_clicks")
+                actual = float(exp.get("actual_cost") or 0)
+                cost_per = (
+                    round(actual / float(incr), 6)
+                    if incr is not None and float(incr) > 0
+                    else None
+                )
+                outcomes.append(
+                    {
+                        "external_key": f"{exp['experiment_id']}:latest_outcome",
+                        "experiment_id": exp["experiment_id"],
+                        "outcome": last.get("outcome"),
+                        "checkpoint_days": last.get("checkpoint_days"),
+                        "adjusted_incremental_clicks": incr,
+                        "actual_cost": actual,
+                        "actual_cost_per_incremental_click": cost_per,
+                        "status": exp.get("status"),
+                    }
+                )
+        return {
+            "register": experiments,
+            "due_for_measurement": due,
+            "newly_classified": newly_classified,
+            "costs": costs,
+            "measurements": measurements,
+            "outcome_summary": outcomes,
+            "total_intervention_spend": round(sum(float(c.get("amount") or 0) for c in costs), 6),
+            "note": (
+                "Attributed experiment impact is separate from site-wide observed movement."
+            ),
         }
 
     def _ai_referral_sessions(self, start: date, end: date) -> Optional[float]:
@@ -249,19 +403,16 @@ class WeeklyReportService:
             return None
         return float(rows[0]["sessions"])
 
-    def _freshness_notes(self, as_of: date) -> Dict[str, Any]:
-        notes = {"as_of_date": as_of.isoformat()}
-        for table, column in (("gsc_daily", "date"), ("ga4_daily", "date"), ("serp_daily", "date")):
-            if self.store.count(table) == 0:
-                notes[table] = "unavailable"
-                continue
-            row = self.store.fetchall(f"SELECT MAX({column}) AS d FROM {table}")[0]
-            notes[table] = row["d"]
-        return notes
+    def _freshness_notes(self, end: date) -> Dict[str, Any]:
+        return {
+            "as_of": end.isoformat(),
+            "gsc_lag_days": self.config.freshness.gsc_days,
+            "ga4_lag_days": self.config.freshness.ga4_days,
+        }
 
 
 def _index_metrics(metrics: List[Dict[str, Any]]) -> Dict[tuple, Any]:
-    return {(item["metric_name"], item["segment_json"]): item.get("metric_value") for item in metrics}
+    return {(m["metric_name"], m.get("segment_json") or "{}"): m.get("metric_value") for m in metrics}
 
 
 def _num(value: Any) -> Optional[float]:

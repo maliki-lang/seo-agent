@@ -554,6 +554,46 @@ class TrackingRunner:
         report_id: Optional[str] = None,
         end_date: Optional[date] = None,
         limit: int = 10,
+        catalogue_version: Optional[str] = None,
+        build_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Phase 15 v2 portfolio. Legacy v1 remains available via CLI score-v1 only."""
+        from .opportunities import build_opportunity_portfolio
+
+        activated = catalogue_version
+        if not activated and not build_id:
+            rows = self.store.fetchall(
+                """
+                SELECT catalogue_version FROM keyword_catalog
+                WHERE active = 1 AND approval_status = 'activated'
+                ORDER BY approved_at DESC LIMIT 1
+                """
+            )
+            activated = rows[0]["catalogue_version"] if rows else None
+        if not activated and not build_id:
+            return {
+                "blocked": True,
+                "reason": "no_activated_evidence_catalogue",
+                "opportunity_count": 0,
+                "opportunities": [],
+                "note": "Do not fall back to legacy v1 opportunities.",
+            }
+        return build_opportunity_portfolio(
+            self.store,
+            self.config,
+            catalogue_version=activated,
+            build_id=build_id,
+            period_end=end_date,
+            limit=limit,
+            report_id=report_id,
+        )
+
+    def build_opportunities_v1(
+        self,
+        *,
+        report_id: Optional[str] = None,
+        end_date: Optional[date] = None,
+        limit: int = 10,
     ) -> Dict[str, Any]:
         report = report_id or f"ops-{utc_now_iso()}"
         rows = OpportunityBuilder(self.config, self.store).build(

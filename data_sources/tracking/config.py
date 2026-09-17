@@ -59,6 +59,19 @@ class FreshnessConfig:
 
 
 @dataclass(frozen=True)
+class EconomicsConfig:
+    default_currency: str = "SGD"
+    max_cost_per_incremental_click: Optional[float] = None
+    minimum_incremental_clicks: float = 1.0
+    minimum_priority_score: float = 0.01
+    minimum_experiments_for_learning: int = 5
+    cannibalization_min_impressions: int = 20
+    cannibalization_min_distinct_urls: int = 2
+    winner_min_lift_pct: float = 0.15
+    gsc_complete_lag_days: int = 3
+
+
+@dataclass(frozen=True)
 class TrackingConfig:
     env: str = "development"
     timezone: str = "Asia/Singapore"
@@ -107,6 +120,11 @@ class TrackingConfig:
     catalogue_methodology_version: str = "catalogue_gsc_v1"
     catalogue_relevance_terms: List[str] = field(default_factory=list)
     catalogue_selection_policy: Any = None
+    economics: EconomicsConfig = field(default_factory=EconomicsConfig)
+    lark_experiments_table_id: str = ""
+    lark_experiment_costs_table_id: str = ""
+    lark_experiment_measurements_table_id: str = ""
+    lark_experiment_outcomes_table_id: str = ""
 
     @property
     def sqlite_path(self) -> Path:
@@ -192,6 +210,7 @@ def load_config(path: Optional[str] = None) -> TrackingConfig:
     retry_raw = raw.get("retry") or {}
     freshness_raw = raw.get("freshness") or {}
     catalogue_raw = raw.get("catalogue") or {}
+    economics_raw = raw.get("economics") or {}
     relevance_terms = catalogue_raw.get("relevance_terms") or []
     if not isinstance(relevance_terms, list):
         raise ConfigurationError("catalogue.relevance_terms must be a list")
@@ -202,6 +221,24 @@ def load_config(path: Optional[str] = None) -> TrackingConfig:
     flat_terms = list(selection_policy.flat_relevance_terms())
     if relevance_terms and not (catalogue_raw.get("relevance") or {}):
         flat_terms = [str(t).strip().lower() for t in relevance_terms if str(t).strip()]
+    max_cost = economics_raw.get("max_cost_per_incremental_click")
+    economics = EconomicsConfig(
+        default_currency=str(economics_raw.get("default_currency") or "SGD"),
+        max_cost_per_incremental_click=float(max_cost) if max_cost not in (None, "") else None,
+        minimum_incremental_clicks=float(economics_raw.get("minimum_incremental_clicks", 1.0)),
+        minimum_priority_score=float(economics_raw.get("minimum_priority_score", 0.01)),
+        minimum_experiments_for_learning=_as_int(
+            economics_raw.get("minimum_experiments_for_learning"), 5
+        ),
+        cannibalization_min_impressions=_as_int(
+            economics_raw.get("cannibalization_min_impressions"), 20
+        ),
+        cannibalization_min_distinct_urls=_as_int(
+            economics_raw.get("cannibalization_min_distinct_urls"), 2
+        ),
+        winner_min_lift_pct=float(economics_raw.get("winner_min_lift_pct", 0.15)),
+        gsc_complete_lag_days=_as_int(economics_raw.get("gsc_complete_lag_days"), 3),
+    )
     return TrackingConfig(
         env=os.getenv("TRACKING_ENV", raw.get("env", "development")),
         timezone=os.getenv("TRACKING_TIMEZONE", raw.get("timezone", "Asia/Singapore")),
@@ -268,4 +305,18 @@ def load_config(path: Optional[str] = None) -> TrackingConfig:
         catalogue_methodology_version=selection_policy.methodology_version,
         catalogue_relevance_terms=flat_terms,
         catalogue_selection_policy=selection_policy,
+        economics=economics,
+        lark_experiments_table_id=os.getenv(
+            "LARK_EXPERIMENTS_TABLE_ID", raw.get("lark_experiments_table_id", "")
+        ),
+        lark_experiment_costs_table_id=os.getenv(
+            "LARK_EXPERIMENT_COSTS_TABLE_ID", raw.get("lark_experiment_costs_table_id", "")
+        ),
+        lark_experiment_measurements_table_id=os.getenv(
+            "LARK_EXPERIMENT_MEASUREMENTS_TABLE_ID",
+            raw.get("lark_experiment_measurements_table_id", ""),
+        ),
+        lark_experiment_outcomes_table_id=os.getenv(
+            "LARK_EXPERIMENT_OUTCOMES_TABLE_ID", raw.get("lark_experiment_outcomes_table_id", "")
+        ),
     )

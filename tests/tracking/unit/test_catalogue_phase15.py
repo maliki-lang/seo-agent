@@ -352,11 +352,18 @@ def test_build_portfolio_export_import_and_llm(tmp_path):
         ("opp-test-1",),
     )
     assert rows
-    assert all(r["expected_incremental_clicks"] is not None or r["category"] == "geo" or r["action_type"] in {
-        "manual_investigation",
-        "product_mapping",
-        "geo_evidence_upgrade",
-    } or True for r in rows)
+    for r in rows:
+        action = r["action_type"]
+        category = r["category"]
+        clicks = r["expected_incremental_clicks"]
+        if action in {"manual_investigation", "product_mapping", "technical_fix"}:
+            assert clicks is None, f"diagnostic {action} must not invent click impact"
+        elif category == "geo" or action == "geo_evidence_upgrade":
+            # GEO may omit click estimates; referral/citation metrics are separate.
+            assert clicks is None or float(clicks) >= 0
+        else:
+            assert clicks is not None, f"SEO action {action} must preserve raw click gain"
+            assert float(clicks) >= 0
     # Raw gain preserved on SEO click opportunities
     seo_click = [r for r in rows if r["expected_incremental_clicks"] not in (None,)]
     assert seo_click

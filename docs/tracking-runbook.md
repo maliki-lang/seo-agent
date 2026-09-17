@@ -65,6 +65,45 @@ python -m data_sources.tracking.cli catalogue check --build-id BUILD --json
 python -m data_sources.tracking.cli catalogue report --build-id BUILD --output docs/catalogue-provenance-v1.md --json
 ```
 
+## Opportunity intelligence (Phase 15) and experiments (Phase 16)
+
+```bash
+# Build constrained portfolio (up to ten; may return fewer)
+python -m data_sources.tracking.cli opportunities build \
+  --catalogue-version evidence-v1-XXXX --period-end YYYY-MM-DD --json
+
+python -m data_sources.tracking.cli opportunities export-review \
+  --report-id REPORT --output /tmp/opp-review.csv --json
+
+# Human fills reviewer_decision / reviewed_by, then:
+python -m data_sources.tracking.cli opportunities import-decisions \
+  --report-id REPORT --input /tmp/opp-review.csv --json
+
+# Create experiment from an approved opportunity
+python -m data_sources.tracking.cli experiments create \
+  --opportunity-id OPP_ID --approved-by Ting --owner Maliki --json
+
+python -m data_sources.tracking.cli experiments record-publication \
+  --experiment-id EXP_ID \
+  --published-at 2026-09-20T09:00:00+08:00 \
+  --before-hash HASH_BEFORE --after-hash HASH_AFTER \
+  --implementation-reference URL_OR_COMMIT \
+  --changes-json changes.json --json
+
+python -m data_sources.tracking.cli experiments add-cost \
+  --experiment-id EXP_ID --cost-type review --quantity 1.5 --unit-cost 45 --currency SGD --json
+
+python -m data_sources.tracking.cli experiments measure \
+  --experiment-id EXP_ID --checkpoint 28 --as-of-date 2026-10-18 --json
+
+python -m data_sources.tracking.cli experiments list --status measuring --json
+python -m data_sources.tracking.cli experiments show --experiment-id EXP_ID --json
+```
+
+Weekly reports use Phase 15 v2 opportunities only. If no activated evidence catalogue exists, the opportunity section is **blocked** (no silent v1 fallback). Experiment due measurements, costs, and outcomes are included in the weekly summary and optional Lark upserts.
+
+Do not auto-publish content. Experiments only record evidence of externally completed changes.
+
 ## Daily / backfill / weekly
 
 ```bash

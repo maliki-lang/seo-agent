@@ -115,3 +115,103 @@ class LarkBaseSink:
                 or row["opportunity_id"]
             )
         return {"upserted": len(record_ids), "record_ids": record_ids}
+
+    def _upsert_rows(
+        self,
+        *,
+        table_id: str,
+        rows: List[Dict[str, Any]],
+        external_key_fn,
+        fields_fn,
+    ) -> Dict[str, Any]:
+        if not self.config.lark_base_app_token or not table_id:
+            return {"upserted": 0, "skipped": True, "reason": "table not configured"}
+        token = self._tenant_token()
+        record_ids = []
+        for row in rows:
+            external_key = external_key_fn(row)
+            fields = fields_fn(row)
+            url = (
+                f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
+                f"{self.config.lark_base_app_token}/tables/{table_id}/records"
+            )
+            response = self._post(
+                url,
+                {"fields": fields, "client_token": external_key},
+                {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            )
+            record_ids.append(
+                (response.get("data") or {}).get("record", {}).get("record_id")
+                or external_key
+            )
+        return {"upserted": len(record_ids), "record_ids": record_ids}
+
+    def upsert_experiments(self, experiments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return self._upsert_rows(
+            table_id=self.config.lark_experiments_table_id,
+            rows=experiments,
+            external_key_fn=lambda r: r["experiment_id"],
+            fields_fn=lambda r: {
+                "experiment_id": r["experiment_id"],
+                "opportunity_id": r.get("opportunity_id"),
+                "status": r.get("status"),
+                "action_type": r.get("action_type"),
+                "target_page": r.get("target_page") or "",
+                "owner": r.get("owner") or "",
+                "actual_cost": r.get("actual_cost"),
+                "cost_currency": r.get("cost_currency") or "",
+                "published_at": r.get("published_at") or "",
+            },
+        )
+
+    def upsert_experiment_costs(self, costs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return self._upsert_rows(
+            table_id=self.config.lark_experiment_costs_table_id,
+            rows=costs,
+            external_key_fn=lambda r: r["cost_id"],
+            fields_fn=lambda r: {
+                "cost_id": r["cost_id"],
+                "experiment_id": r.get("experiment_id"),
+                "cost_type": r.get("cost_type"),
+                "amount": r.get("amount"),
+                "currency": r.get("currency"),
+                "incurred_at": r.get("incurred_at") or "",
+            },
+        )
+
+    def upsert_experiment_measurements(
+        self, measurements: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        return self._upsert_rows(
+            table_id=self.config.lark_experiment_measurements_table_id,
+            rows=measurements,
+            external_key_fn=lambda r: f"{r['experiment_id']}:{r['checkpoint_days']}",
+            fields_fn=lambda r: {
+                "experiment_id": r.get("experiment_id"),
+                "checkpoint_days": r.get("checkpoint_days"),
+                "outcome": r.get("outcome"),
+                "adjusted_incremental_clicks": r.get("adjusted_incremental_clicks"),
+                "adjustment_method": r.get("adjustment_method"),
+                "confidence_label": r.get("confidence_label"),
+                "quality_status": r.get("quality_status"),
+            },
+        )
+
+    def upsert_experiment_outcomes(self, outcomes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return self._upsert_rows(
+            table_id=self.config.lark_experiment_outcomes_table_id,
+            rows=outcomes,
+            external_key_fn=lambda r: r.get("external_key")
+            or f"{r['experiment_id']}:latest_outcome",
+            fields_fn=lambda r: {
+                "experiment_id": r.get("experiment_id"),
+                "outcome": r.get("outcome"),
+                "checkpoint_days": r.get("checkpoint_days"),
+                "adjusted_incremental_clicks": r.get("adjusted_incremental_clicks"),
+                "actual_cost": r.get("actual_cost"),
+                "actual_cost_per_incremental_click": r.get(
+                    "actual_cost_per_incremental_click"
+                ),
+                "status": r.get("status"),
+            },
+        )

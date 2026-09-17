@@ -98,7 +98,9 @@ def _base_row(
         "effort_value": EFFORT[effort_label],
         "metric_to_watch": metric,
         "assumptions_json": assumptions,
-        "target_query_or_question": (benchmarks[0] if benchmarks else evidence.get("keyword") or ""),
+        "target_query_or_question": evidence.get("keyword")
+        or evidence.get("query")
+        or (benchmarks[0] if benchmarks else ""),
         "impact_estimate": (
             f"estimated_click_gain={gain:.2f}"
             if click_gain is not None
@@ -145,6 +147,8 @@ def load_benchmark_rows(
                     or c.get("primary_observed_page")
                     or "",
                     "observed_page": c.get("primary_observed_page") or "",
+                    "primary_observed_page": c.get("primary_observed_page") or "",
+                    "observed_pages_json": c.get("observed_pages_json") or [],
                     "target_page_status": c.get("target_page_status") or "",
                     "multi_page_class": c.get("multi_page_class") or "",
                     "semantic_authority": c.get("semantic_authority") or "",
@@ -233,6 +237,8 @@ def detect_all(
     period_end: date,
     catalogue_version: Optional[str] = None,
     build_id: Optional[str] = None,
+    cannibalization_min_impressions: int = 20,
+    cannibalization_min_distinct_urls: int = 2,
 ) -> Dict[str, Any]:
     benchmarks, blocked = load_benchmark_rows(
         store,
@@ -251,7 +257,16 @@ def detect_all(
     _add(_ctr_underperformance(benchmarks, period_start, period_end), OpportunitySourceType.CTR_UNDERPERFORMANCE.value)
     _add(_ranking_improvement(benchmarks, period_start, period_end), OpportunitySourceType.RANKING_IMPROVEMENT.value)
     _add(_page_one_underperformance(benchmarks, period_start, period_end), OpportunitySourceType.PAGE_ONE_UNDERPERFORMANCE.value)
-    _add(_cannibalization(benchmarks, period_start, period_end), OpportunitySourceType.CANNIBALIZATION.value)
+    _add(
+        _cannibalization(
+            benchmarks,
+            period_start,
+            period_end,
+            min_impressions=cannibalization_min_impressions,
+            min_distinct_urls=cannibalization_min_distinct_urls,
+        ),
+        OpportunitySourceType.CANNIBALIZATION.value,
+    )
     _add(_wrong_target(benchmarks, period_start, period_end), OpportunitySourceType.WRONG_TARGET.value)
     _add(_traffic_commerce_gap(benchmarks, period_start, period_end), OpportunitySourceType.TRAFFIC_TO_COMMERCE_GAP.value)
     _add(_existing_page_expansion(benchmarks, period_start, period_end), OpportunitySourceType.EXISTING_PAGE_EXPANSION.value)
@@ -413,10 +428,54 @@ def _page_one_underperformance(rows, start, end) -> List[Dict[str, Any]]:
     return out
 
 
-def _cannibalization(rows, start, end) -> List[Dict[str, Any]]:
+def _distinct_sunnystep_urls(row: Dict[str, Any]) -> List[str]:
+    """Collect distinct canonical Sunnystep URLs from candidate evidence."""
+    urls: List[str] = []
+    for key in ("target_page", "observed_page", "serper_ranking_url", "primary_observed_page"):
+        raw = row.get(key) or ""
+        if raw:
+            urls.append(raw)
+    observed = row.get("observed_pages_json")
+    if isinstance(observed, str) and observed:
+        try:
+            observed = json.loads(observed)
+        except (TypeError, json.JSONDecodeError):
+            observed = []
+    if isinstance(observed, list):
+        for item in observed:
+            if isinstance(item, dict):
+                urls.append(item.get("page") or item.get("url") or "")
+            elif isinstance(item, str):
+                urls.append(item)
+    distinct = []
+    seen = set()
+    for url in urls:
+        key = _norm_host_path(url)
+        if not key or key in seen:
+            continue
+        host = key.split("/", 1)[0]
+        if host == "sunnystep.com" or host.endswith(".sunnystep.com") or host == "gosunnystep.myshopify.com":
+            seen.add(key)
+            distinct.append(url)
+    return distinct
+
+
+def _cannibalization(
+    rows,
+    start,
+    end,
+    *,
+    min_impressions: int = 20,
+    min_distinct_urls: int = 2,
+) -> List[Dict[str, Any]]:
     out = []
     for row in rows:
         if row.get("multi_page_class") != "cannibalization_candidate":
+            continue
+        if int(row.get("impressions") or 0) < int(min_impressions):
+            continue
+        distinct_urls = _distinct_sunnystep_urls(row)
+        if len(distinct_urls) < int(min_distinct_urls):
             continue
         gain = estimated_click_gain(
             impressions=row["impressions"],
@@ -434,6 +493,8 @@ def _cannibalization(rows, start, end) -> List[Dict[str, Any]]:
                     "keyword": row["keyword"],
                     "multi_page_class": row.get("multi_page_class"),
                     "impressions": row["impressions"],
+                    "distinct_sunnystep_urls": distinct_urls[:10],
+                    "distinct_url_count": len(distinct_urls),
                     "period_start": start.isoformat(),
                     "period_end": end.isoformat(),
                 },
