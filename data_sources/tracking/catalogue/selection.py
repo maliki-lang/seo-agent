@@ -12,6 +12,7 @@ from ..enums import (
     CandidateDecision,
     EligibilityStatus,
     FamilyRole,
+    SemanticAuthority,
     StrategicLane,
     TargetPageStatus,
 )
@@ -87,8 +88,10 @@ def _rank_tuple(
     score = breakdown.selection_score_v2
     preselected_boost = 1 if int(cand.get("serp_preselected") or 0) else 0
     actionable_boost = 1 if (cand.get("target_page_status") or "") in ACTIONABLE_TARGETS else 0
+    llm_boost = 1 if (cand.get("semantic_authority") or "") == SemanticAuthority.LLM.value else 0
     return (
         score if score is not None else -1.0,
+        llm_boost,
         actionable_boost,
         preselected_boost,
         float(cand.get("gsc_impressions") or 0),
@@ -121,6 +124,7 @@ def _eligible_primaries(
     *,
     policy: CatalogueSelectionPolicy,
     require_serper: bool,
+    require_llm_semantics: bool = False,
 ) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for cand in candidates:
@@ -131,6 +135,11 @@ def _eligible_primaries(
         brand = cand.get("brand_status") or ""
         if brand in {BrandStatus.BRANDED.value, BrandStatus.AMBIGUOUS_BRAND.value}:
             continue
+        if require_llm_semantics:
+            if (cand.get("semantic_authority") or "") != SemanticAuthority.LLM.value:
+                continue
+            if int(cand.get("llm_no_suitable_target") or 0) == 1:
+                continue
         target_status = cand.get("target_page_status") or ""
         if target_status == TargetPageStatus.NO_SENSIBLE_TARGET.value:
             continue
@@ -249,6 +258,7 @@ def select_portfolio(
     build_id: str,
     policy: Optional[CatalogueSelectionPolicy] = None,
     require_serper: Optional[bool] = None,
+    require_llm_semantics: bool = False,
 ) -> Dict[str, Any]:
     """Rewrite decision=selected into a quota/cap-constrained family-primary portfolio."""
     store.migrate()
@@ -259,7 +269,8 @@ def select_portfolio(
     families = store.fetchall("SELECT * FROM keyword_families WHERE build_id = ?", (build_id,))
     if not families:
         raise DataQualityError(
-            f"No keyword_families for build {build_id}. Run catalogue derive-families first."
+            f"No keyword_families for build {build_id}. Run catalogue derive-families "
+            "or assess-llm --assessment-type pool_semantic first."
         )
 
     selection_policy = policy or policy_from_config(config)
@@ -299,7 +310,10 @@ def select_portfolio(
     ]
 
     primaries = _eligible_primaries(
-        candidates, policy=selection_policy, require_serper=must_serper
+        candidates,
+        policy=selection_policy,
+        require_serper=must_serper,
+        require_llm_semantics=require_llm_semantics,
     )
     by_lane: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for cand in primaries:
@@ -332,7 +346,7 @@ def select_portfolio(
         rank_info = _rank_tuple(
             cand, selection_policy, covered=covered, require_serper=must_serper
         )
-        score, _, _, _, _, _, incr, breakdown = rank_info
+        score, _, _, _, _, _, _, incr, breakdown = rank_info
         if breakdown.hard_excluded or score is None:
             return False
         selected.append(cand)
@@ -636,6 +650,7 @@ def select_portfolio(
         "policy_fingerprint": selection_policy.fingerprint(),
         "policy_version": selection_policy.policy_version,
         "require_serper": must_serper,
+        "require_llm_semantics": require_llm_semantics,
         "selected_limit": selection_policy.selected_limit,
         "alternate_limit": selection_policy.alternate_limit,
         "selected_count": len(selected),

@@ -7,10 +7,57 @@
 
 **Owner:** Maliki
 **Approver:** Ting
-**Status:** Continuation contract after Phase 13
+**Status:** Continuation contract after Phase 13 — **amended 2026-09-17 for mid-funnel LLM semantic ownership**
 **Primary outcome:** incremental non-branded organic clicks at the lowest defensible cost
 
 </aside>
+
+## 0a. Contract amendment (2026-09-17) — supersedes §2 and §5 shortlist-only wording
+
+This amendment **supersedes** earlier language that:
+
+- confined LLM assessment to a **final shortlist review** only;
+- forbade touching Phase 10–13 **semantic** ownership (intent, relevance, family, representative, target actionability).
+
+### Intended lifecycle (authoritative)
+
+```
+source-backed candidates
+→ technical normalization and exact deduplication
+→ evidence attachment
+→ bounded LLM semantic assessment across the broad eligible pool
+→ deterministic validation of IDs, evidence, metrics, and target allowlists
+→ LLM-informed family and representative selection
+→ deterministic thresholds, cost limits, quotas, and portfolio constraints
+→ human review
+→ final approval
+→ activation
+→ Phase 15 opportunities
+```
+
+### Ownership
+
+**LLM owns (bounded, schema-validated, auditable, non-authoritative for facts):**
+
+- intent; customer need; business relevance;
+- semantic duplication; family membership; representative selection;
+- actionability; target recommendation from an allowlist;
+- no-suitable-target diagnosis.
+
+**Deterministic code retains:**
+
+- measured facts; provenance; exact deduplication;
+- schema and reference validation; cost controls;
+- numerical scoring; portfolio constraints;
+- approval and activation enforcement.
+
+Phase 10–13 **scaffolding** (schema, Serper preselect, score v2, quotas) remains. Its deterministic classify/families/target rules become **fallback** when no valid LLM assessment exists. A final-shortlist-only LLM review cannot recover candidates already rejected, misrouted, incorrectly grouped, or assigned the wrong target.
+
+### CLI implication
+
+`catalogue assess-llm` must support `--scope eligible_pool` (and related eligible scopes), not only `reviewed_shortlist`.
+
+---
 
 ## 0. Specification sequence
 
@@ -72,13 +119,15 @@ Do not start Phase 14 coding until this report is complete.
 
 ## 2. Scope boundary with Phases 10–13
 
+> **Superseded in part by §0a (2026-09-17).** Phase 10–13 still owns scaffolding (schema, Serper preselect, score v2, quotas, review/approval/activation). Deterministic intent/relevance/family/representative/target rules remain as **fallback** only. Mid-funnel `pool_semantic` LLM assessment (Phase 14b) owns those semantic fields when validated. Do not treat “final shortlist only” as the semantic boundary.
+
 The predecessor Phase 10–13 specification already owns:
 
-- keyword routing and search-intent classification;
-- improved business-relevance rules;
-- conservative keyword-family derivation;
+- keyword routing and search-intent classification *(deterministic fallback; LLM-preferred after §0a)*;
+- improved business-relevance rules *(deterministic fallback; LLM-preferred after §0a)*;
+- conservative keyword-family derivation *(deterministic fallback; LLM-preferred after §0a)*;
 - distinction between keyword family and content cluster;
-- target-page actionability;
+- target-page actionability *(deterministic fallback; LLM-preferred after §0a)*;
 - protection versus opportunity scoring;
 - lane-balanced Serper preselection;
 - catalogue score v2;
@@ -87,11 +136,11 @@ The predecessor Phase 10–13 specification already owns:
 - review import/export;
 - approval and activation hardening.
 
-Do not duplicate these features here.
+Do not duplicate the scaffolding features here. Semantic ownership follows §0a.
 
 This specification begins only after that selection-quality foundation is available. It owns:
 
-1. auditable, mandatory and non-authoritative LLM assessment at final catalogue review;
+1. auditable, mandatory and non-authoritative LLM assessment across the **eligible pool** (mid-funnel) plus optional final shortlist review;
 2. evidence-backed and pilot-tested AI-question benchmarks;
 3. action-centric opportunities from multiple evidence types;
 4. top-ten opportunity portfolio construction;
@@ -114,39 +163,19 @@ A benchmark is primarily a measurement anchor. It is not an instruction to repea
 
 ## 4. Objective
 
-Extend the completed Phase 10–13 flow:
+Extend the completed Phase 10–13 flow. **Authoritative lifecycle is §0a**; the shortlist-only diagram below is retained only as historical Phase 14 framing and is superseded for semantic ownership.
 
 ```
 source-backed candidates
-→ routing and intent
-→ keyword families
-→ target-page actionability
-→ Serper preselection
-→ score v2
-→ coverage-constrained portfolio
-→ review
-→ approval
-→ activation
-```
-
-with:
-
-```
-approved keyword portfolio
-→ mandatory non-authoritative LLM assessment at final catalogue review
-→ deterministic validation
-→ human approval
-→ evidence-backed question candidates
-→ low-cost AI-question pilot
-→ reviewed 20-question benchmark
-→ multi-signal problem detection
-→ LLM-assisted diagnosis where enabled
-→ deterministic impact and cost calculation
-→ deduplicated top-ten action portfolio
-→ human approval
-→ costed experiment
-→ 14/28/56-day measurement
-→ winner/loss/inconclusive learning
+→ technical normalization and exact deduplication
+→ evidence attachment
+→ bounded LLM semantic assessment (eligible pool)
+→ deterministic validation (IDs, evidence, metrics, allowlists)
+→ LLM-informed family / representative selection
+→ Serper preselection + score v2 + coverage-constrained portfolio
+→ review → approval → activation
+→ Phase 15 multi-signal opportunities (consume LLM targets)
+→ Phase 16 experiments (after semantically corrected activated catalogue)
 ```
 
 The final system must answer:
@@ -156,11 +185,14 @@ The final system must answer:
 
 ## 5. Phase 14 — Bounded LLM assistance and validated AI questions
 
+> **§0a supersedes shortlist-only wording in this section.** Phase 14b adds `pool_semantic` over `eligible_pool` / `eligible_nonbrand` / `preselected_pool`. Final `semantic_review` on the shortlist remains optional polish, not the sole semantic gate.
+
 ### 5.1 LLM boundary
 
 The LLM may:
 
 - explain customer need and intent from supplied evidence;
+- classify search intent, business relevance, actionability, and family membership (mid-funnel `pool_semantic`);
 - identify possible semantic duplicates not caught by deterministic family rules;
 - recommend a target page from a supplied allowlist;
 - explain business relevance using a supplied rubric;
@@ -215,7 +247,7 @@ Add a table or repository-equivalent structure using the next available migratio
 
 ```
 assessment_id             primary key
-assessment_type           semantic_review|question_rewrite|answer_rubric|opportunity_diagnosis
+assessment_type           pool_semantic|semantic_review|question_rewrite|answer_rubric|opportunity_diagnosis
 subject_type              family|cluster|keyword_candidate|question_candidate|opportunity
 subject_id
 build_id                  nullable
@@ -250,12 +282,14 @@ Add an explicit command equivalent to:
 ```bash
 python -m data_sources.tracking.cli catalogue assess-llm \
   --build-id BUILD_ID \
-  --assessment-type semantic_review \
-  --scope reviewed_shortlist \
+  --assessment-type pool_semantic \
+  --scope eligible_nonbrand \
   --limit N \
   --dry-run \
   --json
 ```
+
+(Optional final polish: `--assessment-type semantic_review --scope reviewed_shortlist`.)
 
 The dry run must show:
 

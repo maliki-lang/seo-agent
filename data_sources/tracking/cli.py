@@ -78,12 +78,51 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.set_defaults(handler="baseline")
 
     opportunities = sub.add_parser(
-        "opportunities", parents=[shared], help="Score evidence-backed SEO/GEO opportunities"
+        "opportunities", parents=[shared], help="Multi-signal SEO/GEO opportunity intelligence"
     )
-    opportunities.add_argument("--end-date")
-    opportunities.add_argument("--report-id")
-    opportunities.add_argument("--limit", type=int, default=10)
-    opportunities.set_defaults(handler="opportunities")
+    opp_sub = opportunities.add_subparsers(dest="opportunities_command", required=True)
+
+    opp_build = opp_sub.add_parser(
+        "build",
+        parents=[shared],
+        help="Build constrained top-ten action portfolio (Phase 15)",
+    )
+    opp_build.add_argument("--catalogue-version", help="Activated keyword catalogue version")
+    opp_build.add_argument("--build-id", help="Selected keyword candidate build_id")
+    opp_build.add_argument("--period-end")
+    opp_build.add_argument("--limit", type=int, default=10)
+    opp_build.add_argument("--llm-assist", action="store_true")
+    opp_build.add_argument("--report-id")
+    opp_build.add_argument("--owner", default="seo-agent")
+    opp_build.set_defaults(handler="opportunities_build")
+
+    opp_export = opp_sub.add_parser(
+        "export-review",
+        parents=[shared],
+        help="Export opportunity review CSV",
+    )
+    opp_export.add_argument("--report-id", required=True)
+    opp_export.add_argument("--output", required=True)
+    opp_export.set_defaults(handler="opportunities_export_review")
+
+    opp_import = opp_sub.add_parser(
+        "import-decisions",
+        parents=[shared],
+        help="Import opportunity reviewer decisions from CSV",
+    )
+    opp_import.add_argument("--report-id", required=True)
+    opp_import.add_argument("--input", required=True)
+    opp_import.set_defaults(handler="opportunities_import_decisions")
+
+    opp_legacy = opp_sub.add_parser(
+        "score-v1",
+        parents=[shared],
+        help="Legacy Phase 5 opportunity scorer (keyword-centric)",
+    )
+    opp_legacy.add_argument("--end-date")
+    opp_legacy.add_argument("--report-id")
+    opp_legacy.add_argument("--limit", type=int, default=10)
+    opp_legacy.set_defaults(handler="opportunities_score_v1")
 
     weekly = sub.add_parser("weekly", parents=[shared], help="Generate weekly report")
     weekly.add_argument("--period-end")
@@ -296,6 +335,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Hard-require Serper validation on every selected primary",
     )
+    select_portfolio.add_argument(
+        "--require-llm-semantics",
+        action="store_true",
+        help="Only select family primaries with valid mid-funnel LLM pool_semantic authority",
+    )
     select_portfolio.set_defaults(handler="catalogue_select_portfolio")
 
     assess_llm = catalogue_sub.add_parser(
@@ -307,9 +351,22 @@ def build_parser() -> argparse.ArgumentParser:
     assess_llm.add_argument(
         "--assessment-type",
         required=True,
-        choices=["semantic_review", "question_rewrite", "answer_rubric", "opportunity_diagnosis"],
+        choices=[
+            "semantic_review",
+            "pool_semantic",
+            "question_rewrite",
+            "answer_rubric",
+            "opportunity_diagnosis",
+        ],
     )
-    assess_llm.add_argument("--scope", default="reviewed_shortlist")
+    assess_llm.add_argument(
+        "--scope",
+        default="eligible_nonbrand",
+        help=(
+            "reviewed_shortlist|alternates|eligible_pool|eligible_nonbrand|preselected_pool "
+            "(default eligible_nonbrand for mid-funnel pool_semantic)"
+        ),
+    )
     assess_llm.add_argument("--limit", type=int, default=55)
     assess_llm.add_argument("--dry-run", action="store_true")
     assess_llm.add_argument("--provider", default="openai")
@@ -424,14 +481,50 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _print(payload, as_json)
             return 0
         if args.command == "opportunities":
-            end = parse_date(args.end_date) if args.end_date else None
-            payload = runner.build_opportunities(
-                report_id=args.report_id,
-                end_date=end,
-                limit=args.limit,
-            )
-            _print(payload, as_json)
-            return 0
+            if args.opportunities_command == "build":
+                from .opportunities import build_opportunity_portfolio
+
+                end = parse_date(args.period_end) if args.period_end else None
+                payload = build_opportunity_portfolio(
+                    runner.store,
+                    config,
+                    catalogue_version=args.catalogue_version,
+                    build_id=args.build_id,
+                    period_end=end,
+                    limit=args.limit,
+                    llm_assist=bool(args.llm_assist),
+                    owner=args.owner,
+                    report_id=args.report_id,
+                )
+                _print(payload, as_json)
+                return 0 if (payload.get("gates") or {}).get("gate_status") != "failed" else 2
+            if args.opportunities_command == "export-review":
+                from .opportunities import export_opportunity_review
+
+                payload = export_opportunity_review(
+                    runner.store, report_id=args.report_id, output=args.output
+                )
+                _print(payload, as_json)
+                return 0
+            if args.opportunities_command == "import-decisions":
+                from .opportunities import import_opportunity_decisions
+
+                payload = import_opportunity_decisions(
+                    runner.store, report_id=args.report_id, input_path=args.input
+                )
+                _print(payload, as_json)
+                return 0
+            if args.opportunities_command == "score-v1":
+                end = parse_date(args.end_date) if args.end_date else None
+                payload = runner.build_opportunities(
+                    report_id=args.report_id,
+                    end_date=end,
+                    limit=args.limit,
+                )
+                _print(payload, as_json)
+                return 0
+            parser.error(f"Unhandled opportunities command {args.opportunities_command}")
+            return 2
         if args.command == "weekly":
             end = parse_date(args.period_end) if args.period_end else None
             publish = bool(args.publish) and not bool(args.no_publish)
@@ -517,6 +610,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     config,
                     build_id=args.build_id,
                     require_serper=True if args.require_serper else None,
+                    require_llm_semantics=bool(args.require_llm_semantics),
                 )
                 _print(payload, as_json)
                 gate = (payload.get("quality_gate") or {}).get("gate_status")

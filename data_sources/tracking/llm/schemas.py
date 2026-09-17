@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 SEMANTIC_REVIEW_PROMPT_VERSION = "semantic_review_v1"
+POOL_SEMANTIC_PROMPT_VERSION = "pool_semantic_v1"
 QUESTION_REWRITE_PROMPT_VERSION = "question_rewrite_v1"
 ANSWER_RUBRIC_PROMPT_VERSION = "answer_rubric_v1"
 OPPORTUNITY_DIAGNOSIS_PROMPT_VERSION = "opportunity_diagnosis_v1"
@@ -20,6 +21,29 @@ ALLOWED_ACTION_TYPES = {
     "new_page",
     "geo_evidence_upgrade",
     "manual_investigation",
+}
+
+ALLOWED_SEARCH_INTENTS = {
+    "navigational_brand",
+    "navigational_competitor",
+    "local_store",
+    "transactional_category",
+    "commercial_investigation",
+    "problem_solution",
+    "informational",
+    "campaign_event",
+    "ambiguous",
+}
+
+ALLOWED_BUSINESS_RELEVANCE = {"relevant", "irrelevant", "location_only", "pending_review"}
+
+ALLOWED_ACTIONABILITY = {
+    "optimize_existing",
+    "consolidate_competing_pages",
+    "create_new_page",
+    "protect_existing",
+    "monitor_only",
+    "no_action",
 }
 
 # Measured facts the model must never invent or overwrite.
@@ -43,6 +67,7 @@ FORBIDDEN_FACT_KEYS = {
 def prompt_version_for(assessment_type: str) -> str:
     mapping = {
         "semantic_review": SEMANTIC_REVIEW_PROMPT_VERSION,
+        "pool_semantic": POOL_SEMANTIC_PROMPT_VERSION,
         "question_rewrite": QUESTION_REWRITE_PROMPT_VERSION,
         "answer_rubric": ANSWER_RUBRIC_PROMPT_VERSION,
         "opportunity_diagnosis": OPPORTUNITY_DIAGNOSIS_PROMPT_VERSION,
@@ -116,6 +141,72 @@ def validate_assessment_output(
                 errors.append("recommended_target_page outside supplied allowlist")
             else:
                 normalized["recommended_target_page"] = page.strip()
+        confidence = output.get("confidence", "medium")
+        if confidence not in {"high", "medium", "low"}:
+            errors.append("confidence must be high|medium|low")
+        else:
+            normalized["confidence"] = confidence
+        normalized["assumptions"] = _as_str_list(output.get("assumptions"), "assumptions", errors)
+        normalized["risk_flags"] = _as_str_list(output.get("risk_flags"), "risk_flags", errors)
+
+    elif assessment_type == "pool_semantic":
+        for key in ("customer_need", "business_relevance_rationale", "family_key", "actionability_rationale"):
+            value = output.get(key)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{key} must be a non-empty string")
+            else:
+                normalized[key] = value.strip()
+        intent = output.get("search_intent")
+        if intent not in ALLOWED_SEARCH_INTENTS:
+            errors.append("search_intent not in allowlist")
+        else:
+            normalized["search_intent"] = intent
+        relevance = output.get("business_relevance")
+        if relevance not in ALLOWED_BUSINESS_RELEVANCE:
+            errors.append("business_relevance not in allowlist")
+        else:
+            normalized["business_relevance"] = relevance
+        actionability = output.get("actionability")
+        if actionability not in ALLOWED_ACTIONABILITY:
+            errors.append("actionability not in allowlist")
+        else:
+            normalized["actionability"] = actionability
+        is_rep = output.get("is_family_representative")
+        if not isinstance(is_rep, bool):
+            errors.append("is_family_representative must be a boolean")
+        else:
+            normalized["is_family_representative"] = is_rep
+        no_target = output.get("no_suitable_target")
+        if not isinstance(no_target, bool):
+            errors.append("no_suitable_target must be a boolean")
+        else:
+            normalized["no_suitable_target"] = no_target
+        normalized["semantic_duplicates"] = _as_str_list(
+            output.get("semantic_duplicates"), "semantic_duplicates", errors
+        )
+        # Duplicate IDs must be from supplied allowlist when provided.
+        allow_dup_ids: Set[str] = set()
+        for ref in allow_refs:
+            if ref.startswith("candidate:"):
+                allow_dup_ids.add(ref.split(":", 1)[1])
+            allow_dup_ids.add(ref)
+        if allow_dup_ids:
+            invented_dups = [d for d in normalized["semantic_duplicates"] if d not in allow_dup_ids]
+            if invented_dups:
+                errors.append(f"invented semantic_duplicates: {invented_dups[:5]}")
+        page = output.get("recommended_target_page")
+        if no_target is True:
+            if page not in (None, ""):
+                errors.append("recommended_target_page must be empty when no_suitable_target=true")
+            normalized["recommended_target_page"] = None
+        elif page is None or (isinstance(page, str) and not page.strip()):
+            errors.append("recommended_target_page required unless no_suitable_target=true")
+        elif not isinstance(page, str):
+            errors.append("recommended_target_page must be a string")
+        elif allow_pages and page.strip() not in allow_pages:
+            errors.append("recommended_target_page outside supplied allowlist")
+        else:
+            normalized["recommended_target_page"] = page.strip()
         confidence = output.get("confidence", "medium")
         if confidence not in {"high", "medium", "low"}:
             errors.append("confidence must be high|medium|low")

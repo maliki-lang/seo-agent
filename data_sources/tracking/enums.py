@@ -85,6 +85,44 @@ class OpportunityCategory(str, Enum):
     GEO = "geo"
 
 
+class OpportunityActionType(str, Enum):
+    TITLE_META_REWRITE = "title_meta_rewrite"
+    INTERNAL_LINKING = "internal_linking"
+    ANSWER_SECTION = "answer_section"
+    CONTENT_EXPANSION = "content_expansion"
+    PRODUCT_MAPPING = "product_mapping"
+    CONTENT_CONSOLIDATION = "content_consolidation"
+    TECHNICAL_FIX = "technical_fix"
+    NEW_PAGE = "new_page"
+    GEO_EVIDENCE_UPGRADE = "geo_evidence_upgrade"
+    MANUAL_INVESTIGATION = "manual_investigation"
+
+
+class OpportunitySourceType(str, Enum):
+    CTR_UNDERPERFORMANCE = "ctr_underperformance"
+    RANKING_IMPROVEMENT = "ranking_improvement"
+    PAGE_ONE_UNDERPERFORMANCE = "page_one_underperformance"
+    CANNIBALIZATION = "cannibalization"
+    WRONG_TARGET = "wrong_target"
+    TRAFFIC_TO_COMMERCE_GAP = "traffic_to_commerce_gap"
+    EXISTING_PAGE_EXPANSION = "existing_page_expansion"
+    NEW_PAGE_GAP = "new_page_gap"
+    GEO_EVIDENCE_GAP = "geo_evidence_gap"
+    TECHNICAL_MANUAL = "technical_manual"
+    SOURCE_BLOCKED = "source_blocked"
+
+
+class OpportunityReviewStatus(str, Enum):
+    PENDING = "pending"
+    AWAITING_LLM_DIAGNOSIS = "awaiting_llm_diagnosis"
+    DIAGNOSED = "diagnosed"
+    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    DEFERRED = "deferred"
+    BLOCKED = "blocked"
+
+
 class CatalogueBuildType(str, Enum):
     KEYWORD = "keyword"
     AI_QUESTION = "ai_question"
@@ -224,9 +262,17 @@ class CollectorStatus(str, Enum):
 
 class LlmAssessmentType(str, Enum):
     SEMANTIC_REVIEW = "semantic_review"
+    POOL_SEMANTIC = "pool_semantic"
     QUESTION_REWRITE = "question_rewrite"
     ANSWER_RUBRIC = "answer_rubric"
     OPPORTUNITY_DIAGNOSIS = "opportunity_diagnosis"
+
+
+class SemanticAuthority(str, Enum):
+    LLM = "llm"
+    DETERMINISTIC_FALLBACK = "deterministic_fallback"
+    AWAITING_LLM = "awaiting_llm"
+    LLM_INVALID = "llm_invalid"
 
 
 class LlmValidationStatus(str, Enum):
