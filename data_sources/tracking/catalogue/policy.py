@@ -94,6 +94,17 @@ DEFAULT_LANE_CAPS: Dict[str, int] = {
     "broad_head_term": 4,
 }
 
+# Unused lane-quota capacity redistributes into these lanes (never into a capped-full lane).
+DEFAULT_FALLBACK_ORDER: Tuple[str, ...] = (
+    "need_state",
+    "product_category",
+    "use_case_audience",
+    "commercial_discovery",
+    "strategic_gap",
+    "local_store",
+    "competitor_discovery",
+)
+
 DEFAULT_SCORE_WEIGHTS: Dict[str, float] = {
     "intent_fit": 0.25,
     "product_need_relevance": 0.20,
@@ -156,7 +167,9 @@ class CatalogueSelectionPolicy:
     min_clicks_protect: int = 1
     selected_limit: int = 55
     alternate_limit: int = 15
+    branded_benchmark_limit: int = 15
     serper_preselection_limit: int = 100
+    require_serper_for_selection: bool = False
     product_terms: Tuple[str, ...] = DEFAULT_PRODUCT_TERMS
     need_terms: Tuple[str, ...] = DEFAULT_NEED_TERMS
     commercial_terms: Tuple[str, ...] = DEFAULT_COMMERCIAL_TERMS
@@ -172,6 +185,7 @@ class CatalogueSelectionPolicy:
     family_min_confidence: float = 0.90
     lane_quotas: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_LANE_QUOTAS))
     lane_caps: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_LANE_CAPS))
+    fallback_order: Tuple[str, ...] = DEFAULT_FALLBACK_ORDER
     score_weights: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_SCORE_WEIGHTS))
     penalties: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_PENALTIES))
 
@@ -193,8 +207,12 @@ class CatalogueSelectionPolicy:
             )
         if self.alternate_limit < 0:
             raise ConfigurationError("catalogue.alternate_limit must be >= 0")
+        if self.branded_benchmark_limit < 0:
+            raise ConfigurationError("catalogue.branded_benchmark_limit must be >= 0")
         if self.family_min_confidence < 0 or self.family_min_confidence > 1:
             raise ConfigurationError("catalogue.family_rules.minimum_confidence_for_auto_family must be in [0, 1]")
+        if not self.fallback_order:
+            raise ConfigurationError("catalogue.fallback_order must not be empty")
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -282,8 +300,14 @@ def policy_from_catalogue_raw(
         min_clicks_protect=int(raw.get("min_clicks_protect", base.min_clicks_protect)),
         selected_limit=int(raw.get("selected_limit", base.selected_limit)),
         alternate_limit=int(raw.get("alternate_limit", base.alternate_limit)),
+        branded_benchmark_limit=int(
+            raw.get("branded_benchmark_limit", base.branded_benchmark_limit)
+        ),
         serper_preselection_limit=int(
             raw.get("serper_preselection_limit", base.serper_preselection_limit)
+        ),
+        require_serper_for_selection=bool(
+            raw.get("require_serper_for_selection", base.require_serper_for_selection)
         ),
         product_terms=tuple(product_terms or base.product_terms),
         need_terms=tuple(need_terms or base.need_terms),
@@ -320,6 +344,10 @@ def policy_from_catalogue_raw(
         ),
         lane_quotas=_int_map(raw.get("lane_quotas"), field_name="lane_quotas", defaults=base.lane_quotas),
         lane_caps=_int_map(raw.get("lane_caps"), field_name="lane_caps", defaults=base.lane_caps),
+        fallback_order=tuple(
+            _string_list(raw.get("fallback_order"), field_name="fallback_order")
+            or list(base.fallback_order)
+        ),
         score_weights=_float_map(
             raw.get("score_weights"), field_name="score_weights", defaults=base.score_weights
         ),

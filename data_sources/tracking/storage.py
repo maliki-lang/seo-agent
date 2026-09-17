@@ -929,6 +929,8 @@ class TrackingStore:
             "score_confidence",
             "serp_preselected",
             "serp_preselect_rank",
+            "portfolio_slot",
+            "review_group",
         }
         assignments = []
         values: List[Any] = []

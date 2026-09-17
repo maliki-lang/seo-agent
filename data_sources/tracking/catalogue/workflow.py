@@ -14,6 +14,8 @@ from ..storage import TrackingStore
 from ..transforms.normalize import natural_key, utc_now_iso
 from . import PROVISIONAL_CATALOGUE_VERSION
 from .compare import compare_with_provisional
+from .quality_gates import evaluate_portfolio_gates
+from .policy import policy_from_config
 
 DEFAULT_APPROVED_QUESTION_COUNT = 20
 DEFAULT_APPROVED_KEYWORD_MIN = 1
@@ -70,6 +72,7 @@ def export_review(
         "text",
         "decision",
         "decision_reason",
+        "review_group",
         "cluster_id",
         "proposed_target_page",
         "reviewed_target_page",
@@ -86,16 +89,56 @@ def export_review(
         "serper_position",
         "final_selection_score",
         "source_refs",
+        # selection v2
+        "routing_bucket",
+        "brand_match_type",
+        "brand_confidence",
+        "competitor_name",
+        "search_intent",
+        "strategic_lane",
+        "eligibility_status",
+        "family_id",
+        "family_role",
+        "family_primary",
+        "primary_observed_page",
+        "target_page_status",
+        "proposed_action",
+        "claims_review_required",
+        "selection_score_v2",
+        "selection_rank_within_lane",
+        "portfolio_slot",
+        "alternate_rank",
+        "selection_reasons",
+        "eligibility_reasons",
+        "serper_validation_status",
+        "serp_visibility_score",
+        "serp_opportunity_score",
+        "serp_target_alignment_score",
+        "score_confidence",
     ]
     rows_out: List[Dict[str, Any]] = []
-    for cand in store.fetchall(
-        "SELECT * FROM keyword_candidates WHERE build_id = ? ORDER BY final_selection_score DESC",
+    for cand_row in store.fetchall(
+        """
+        SELECT * FROM keyword_candidates
+        WHERE build_id = ?
+        ORDER BY
+            CASE decision WHEN 'selected' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+            portfolio_slot IS NULL, portfolio_slot,
+            alternate_rank IS NULL, alternate_rank,
+            COALESCE(selection_score_v2, final_selection_score) DESC
+        """,
         (build_id,),
     ):
+        cand = dict(cand_row)
         sources = store.fetchall(
             "SELECT gsc_natural_key FROM keyword_candidate_sources WHERE candidate_id = ?",
             (cand["candidate_id"],),
         )
+        serper_status = ""
+        if cand.get("serper_collected_at") or cand.get("serper_run_id"):
+            serper_status = "validated" if cand.get("serper_position") is not None else "validated_absent"
+        elif int(cand.get("serp_preselected") or 0):
+            serper_status = "preselected_pending"
         rows_out.append(
             {
                 "row_type": "keyword",
@@ -104,6 +147,7 @@ def export_review(
                 "text": cand["canonical_keyword"],
                 "decision": cand["decision"],
                 "decision_reason": cand["decision_reason"] or "",
+                "review_group": cand["review_group"] or "",
                 "cluster_id": cand["cluster_id"] or "",
                 "proposed_target_page": cand["proposed_target_page"] or "",
                 "reviewed_target_page": cand["reviewed_target_page"] or "",
@@ -124,6 +168,39 @@ def export_review(
                 "serper_position": cand["serper_position"],
                 "final_selection_score": cand["final_selection_score"],
                 "source_refs": "|".join(s["gsc_natural_key"] for s in sources),
+                "routing_bucket": cand["routing_bucket"] or "",
+                "brand_match_type": cand["brand_match_type"] or "",
+                "brand_confidence": cand["brand_confidence"] if cand["brand_confidence"] is not None else "",
+                "competitor_name": cand["competitor_name"] or "",
+                "search_intent": cand["search_intent"] or "",
+                "strategic_lane": cand["strategic_lane"] or "",
+                "eligibility_status": cand["eligibility_status"] or "",
+                "family_id": cand["family_id"] or "",
+                "family_role": cand["family_role"] or "",
+                "family_primary": "1" if (cand["family_role"] or "") == "primary" else "0",
+                "primary_observed_page": cand["proposed_target_page"] or cand["ga4_match_page"] or "",
+                "target_page_status": cand["target_page_status"] or "",
+                "proposed_action": cand["proposed_action"] or "",
+                "claims_review_required": int(cand["claims_review_required"] or 0),
+                "selection_score_v2": cand["selection_score_v2"] if cand["selection_score_v2"] is not None else "",
+                "selection_rank_within_lane": cand["selection_rank_within_lane"]
+                if cand["selection_rank_within_lane"] is not None
+                else "",
+                "portfolio_slot": cand["portfolio_slot"] if cand["portfolio_slot"] is not None else "",
+                "alternate_rank": cand["alternate_rank"] if cand["alternate_rank"] is not None else "",
+                "selection_reasons": cand["selection_reasons_json"] or "",
+                "eligibility_reasons": cand["eligibility_reasons_json"] or "",
+                "serper_validation_status": serper_status,
+                "serp_visibility_score": cand["serp_visibility_score"]
+                if cand["serp_visibility_score"] is not None
+                else "",
+                "serp_opportunity_score": cand["serp_opportunity_score"]
+                if cand["serp_opportunity_score"] is not None
+                else "",
+                "serp_target_alignment_score": cand["serp_target_alignment_score"]
+                if cand["serp_target_alignment_score"] is not None
+                else "",
+                "score_confidence": cand["score_confidence"] if cand["score_confidence"] is not None else "",
             }
         )
     if q_build:
@@ -143,6 +220,7 @@ def export_review(
                     "text": q["question"],
                     "decision": q["decision"],
                     "decision_reason": q["decision_reason"] or "",
+                    "review_group": "",
                     "cluster_id": q["cluster_id"] or "",
                     "proposed_target_page": q["proposed_target_page"] or "",
                     "reviewed_target_page": "",
@@ -159,6 +237,31 @@ def export_review(
                     "serper_position": "",
                     "final_selection_score": "",
                     "source_refs": "|".join(s["gsc_natural_key"] for s in sources),
+                    "routing_bucket": "",
+                    "brand_match_type": "",
+                    "brand_confidence": "",
+                    "competitor_name": "",
+                    "search_intent": "",
+                    "strategic_lane": "",
+                    "eligibility_status": "",
+                    "family_id": "",
+                    "family_role": "",
+                    "family_primary": "",
+                    "primary_observed_page": "",
+                    "target_page_status": "",
+                    "proposed_action": "",
+                    "claims_review_required": "",
+                    "selection_score_v2": "",
+                    "selection_rank_within_lane": "",
+                    "portfolio_slot": "",
+                    "alternate_rank": "",
+                    "selection_reasons": "",
+                    "eligibility_reasons": "",
+                    "serper_validation_status": "",
+                    "serp_visibility_score": "",
+                    "serp_opportunity_score": "",
+                    "serp_target_alignment_score": "",
+                    "score_confidence": "",
                 }
             )
 
@@ -300,6 +403,23 @@ def approve_catalogue(
         raise DataQualityError(
             f"Approval requires at least {min_keywords} selected keywords; found {len(selected_kw)}"
         )
+
+    # Block approval when a v2 portfolio quality gate has failed.
+    builds = store.fetchall("SELECT * FROM catalogue_builds WHERE build_id = ?", (build_id,))
+    portfolio_json = builds[0]["portfolio_report_json"] if builds else None
+    if portfolio_json:
+        gate = evaluate_portfolio_gates(
+            store,
+            config,
+            build_id=build_id,
+            policy=policy_from_config(config),
+        )
+        if gate.get("gate_status") == "failed":
+            raise DataQualityError(
+                f"Portfolio quality gate failed ({gate.get('error_count')} errors); "
+                "fix selected portfolio before approve"
+            )
+
     # Every selected keyword needs a decision (already filtered) and a cluster.
     missing_cluster = [r["candidate_id"] for r in selected_kw if not r["cluster_id"]]
     if missing_cluster:

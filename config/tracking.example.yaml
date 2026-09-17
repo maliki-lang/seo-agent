@@ -37,7 +37,17 @@ tracking:
     min_clicks_protect: 1
     selected_limit: 55
     alternate_limit: 15
+    branded_benchmark_limit: 15
     serper_preselection_limit: 100
+    require_serper_for_selection: false
+    fallback_order:
+      - need_state
+      - product_category
+      - use_case_audience
+      - commercial_discovery
+      - strategic_gap
+      - local_store
+      - competitor_discovery
     relevance:
       product_terms:
         - shoe

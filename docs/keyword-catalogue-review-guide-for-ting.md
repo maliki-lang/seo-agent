@@ -511,3 +511,34 @@ From `config/brand_terms.txt` (substring / variant matching):
 ---
 
 If anything in the sheet is unclear while you review, send the `id` + `text` of the row and I will pull the underlying GSC source receipts and explain the decision path line by line.
+
+---
+
+## 17. Selection v2 portfolio (Phase 13)
+
+After classify → families → (optional) Serper preselect/validate, compose the reviewable portfolio with:
+
+```bash
+python -m data_sources.tracking.cli catalogue select-portfolio \
+  --build-id <id> --config config/tracking.example.yaml --json
+```
+
+What this does:
+
+- clears the old global top-N `selected` shortlist
+- selects **55 family primaries** under lane quotas/caps (no brand / ambiguous / location-only / non-primary / non-actionable targets)
+- ranks **15 alternates** (`review_group=alternates_15`)
+- proposes a separate **branded benchmark** set (outside the non-brand 55)
+- writes `portfolio_report_json` + quality-gate results on the build
+- extends `export-review` with v2 columns (`strategic_lane`, `portfolio_slot`, `selection_score_v2`, `review_group`, …)
+
+Filter the review CSV by `review_group`:
+
+| `review_group` | Meaning |
+| --- | --- |
+| `proposed_55` | Portfolio primaries (`decision=selected`) |
+| `alternates_15` | Ranked backups (`decision=pending`) |
+| `branded_benchmark` | Brand-protection proposals (not auto-activated into non-brand catalogue) |
+| `manual_review_exceptions` | Ambiguous brand / claims / homepage-unresolved for human triage |
+
+Approval is blocked when the portfolio quality gate status is `failed`.

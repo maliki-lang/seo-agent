@@ -284,6 +284,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Max primaries to preselect (0 = catalogue.serper_preselection_limit)",
     )
     preselect.set_defaults(handler="catalogue_preselect_serp")
+
+    select_portfolio = catalogue_sub.add_parser(
+        "select-portfolio",
+        parents=[shared],
+        help="Compose quota/cap portfolio (55 primaries + alternates) from family primaries",
+    )
+    select_portfolio.add_argument("--build-id", required=True)
+    select_portfolio.add_argument(
+        "--require-serper",
+        action="store_true",
+        help="Hard-require Serper validation on every selected primary",
+    )
+    select_portfolio.set_defaults(handler="catalogue_select_portfolio")
     return parser
 
 
@@ -383,6 +396,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from .catalogue.classify import classify_build
             from .catalogue.families import derive_families_for_build
             from .catalogue.preselection import preselect_serp_pool
+            from .catalogue.selection import select_portfolio
             from .catalogue.target_pages import evaluate_targets_for_build
             from .catalogue.clusters import derive_clusters
             from .catalogue.compare import compare_with_provisional
@@ -447,6 +461,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
                 _print(payload, as_json)
                 return 0
+            if args.catalogue_command == "select-portfolio":
+                payload = select_portfolio(
+                    runner.store,
+                    config,
+                    build_id=args.build_id,
+                    require_serper=True if args.require_serper else None,
+                )
+                _print(payload, as_json)
+                gate = (payload.get("quality_gate") or {}).get("gate_status")
+                return 0 if gate != "failed" else 2
             if args.catalogue_command == "enrich-ga4":
                 payload = enrich_build_with_ga4(
                     runner.store,
