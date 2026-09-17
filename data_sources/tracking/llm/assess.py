@@ -15,7 +15,13 @@ from ..storage import TrackingStore
 from ..transforms.normalize import canonical_json, sha256_hex, utc_now_iso
 from .client import DEFAULT_MODEL, LlmClient
 from .cost import estimate_batch_cost, estimate_tokens
-from .schemas import prompt_version_for, validate_assessment_output
+from .schemas import (
+    ALLOWED_ACTIONABILITY,
+    ALLOWED_BUSINESS_RELEVANCE,
+    ALLOWED_SEARCH_INTENTS,
+    prompt_version_for,
+    validate_assessment_output,
+)
 
 SYSTEM_PROMPTS = {
     LlmAssessmentType.SEMANTIC_REVIEW.value: (
@@ -28,6 +34,16 @@ SYSTEM_PROMPTS = {
         "Decide intent, customer need, business relevance, family membership, whether this "
         "row is the family representative, actionability, and a target page ONLY from the "
         "supplied allowlist (or set no_suitable_target=true). "
+        "Enums (exact strings only): "
+        "search_intent="
+        "navigational_brand|navigational_competitor|local_store|transactional_category|"
+        "commercial_investigation|problem_solution|informational|campaign_event|ambiguous; "
+        "business_relevance=relevant|irrelevant|location_only|pending_review; "
+        "actionability=optimize_existing|consolidate_competing_pages|create_new_page|"
+        "protect_existing|monitor_only|no_action; "
+        "confidence=high|medium|low (never a number). "
+        "assumptions, risk_flags, and semantic_duplicates must be JSON arrays of strings. "
+        "is_family_representative and no_suitable_target must be booleans. "
         "Never invent measured metrics, evidence IDs, or pages outside the allowlist. "
         "Return JSON only."
     ),
@@ -434,6 +450,13 @@ def assess_subjects(
             "evidence_packet": packet,
             "required_output_keys_hint": _output_hint(assessment_type),
         }
+        if assessment_type == LlmAssessmentType.POOL_SEMANTIC.value:
+            user_payload["allowed_enums"] = {
+                "search_intent": sorted(ALLOWED_SEARCH_INTENTS),
+                "business_relevance": sorted(ALLOWED_BUSINESS_RELEVANCE),
+                "actionability": sorted(ALLOWED_ACTIONABILITY),
+                "confidence": ["high", "medium", "low"],
+            }
         try:
             completion = llm.complete(
                 system=SYSTEM_PROMPTS[assessment_type],
