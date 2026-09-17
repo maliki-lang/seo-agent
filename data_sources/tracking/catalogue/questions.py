@@ -6,22 +6,26 @@ import uuid
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..config import TrackingConfig
-from ..enums import CandidateDecision, CatalogueBuildStatus, CatalogueBuildType
+from ..enums import (
+    CandidateDecision,
+    CatalogueBuildStatus,
+    CatalogueBuildType,
+    LlmReviewStage,
+    PilotStatus,
+    QuestionGateStatus,
+    QuestionSourceType,
+)
 from ..exceptions import ConfigurationError, DataQualityError
 from ..storage import TrackingStore
 from ..transforms.brand_label import BrandClassifier
 from ..transforms.normalize import natural_key, normalize_catalogue_query, sha256_hex, utc_now_iso
 from . import METHODOLOGY_VERSION, PROVISIONAL_CATALOGUE_META
+from .question_review import DEFAULT_QUESTION_FAMILY_TARGETS
 
 QUESTION_PROMPT_VERSION = "ai_question_templates_v1"
 
-DEFAULT_INTENT_MIX: Tuple[Tuple[str, int], ...] = (
-    ("recommendation", 5),
-    ("problem_situation", 5),
-    ("product_selection", 4),
-    ("feature_education", 3),
-    ("comparison", 3),
-)
+# Phase 14 decision-family mix (sum = 20). Legacy aliases map into these buckets.
+DEFAULT_INTENT_MIX: Tuple[Tuple[str, int], ...] = DEFAULT_QUESTION_FAMILY_TARGETS
 
 # Soft comfort framing; avoid cure/treat/FDA absolutes for YMYL adjacency.
 _YMYL_BLOCKLIST = ("cure", "cures", "treat", "treats", "fda-approved", "diagnose", "heal")
@@ -63,6 +67,11 @@ def _render_question(intent: str, keyword: str, page_type: str) -> Tuple[str, st
         return (
             f"How do cushioned everyday shoes compare with {topic} for all-day comfort?",
             "comparison_expansion",
+        )
+    if intent == "work_lifestyle":
+        return (
+            f"What {topic} work for long office days and after-work walks in Singapore?",
+            "context_expansion",
         )
     return (f"What should I know before buying {topic} in Singapore?", "direct_rewrite")
 
@@ -216,6 +225,9 @@ def build_ai_questions(
             rejected += 1
             continue
 
+        evidence_refs = [f"candidate:{candidate['candidate_id']}", f"cluster:{cluster['cluster_id']}"]
+        evidence_refs.extend(f"gsc:{src['gsc_natural_key']}" for src in gsc_sources[:3])
+        # Template wording is assistance only — labelled synthetic_draft until validated.
         questions_out.append(
             {
                 "question_candidate_id": q_id,
@@ -223,14 +235,38 @@ def build_ai_questions(
                 "question": question,
                 "cluster_id": cluster["cluster_id"],
                 "intent": intent,
+                "family_bucket": intent,
                 "proposed_target_page": page,
                 "transformation_method": method,
                 "source_keyword_ids": [],
                 "source_candidate_ids": [candidate["candidate_id"]],
+                "source_type": QuestionSourceType.SYNTHETIC_DRAFT.value,
+                "source_reference": f"template:{QUESTION_PROMPT_VERSION}:{intent}",
+                "source_evidence_refs_json": evidence_refs,
+                "persona": "singapore_comfort_footwear_shopper",
+                "situation": intent,
+                "decision_to_make": "choose_comfortable_footwear",
+                "constraints_json": ["non_branded", "singapore_context"],
+                "expected_answer_elements_json": [
+                    "comfort and fit considerations",
+                    "use-case or situation fit",
+                    "practical shopping criteria",
+                ],
+                "naturalness_status": QuestionGateStatus.PENDING.value,
+                "distinctness_status": QuestionGateStatus.PENDING.value,
+                "safety_status": (
+                    QuestionGateStatus.PASSED.value
+                    if _is_safe_question(question)
+                    else QuestionGateStatus.FAILED.value
+                ),
+                "pilot_status": PilotStatus.NOT_RUN.value,
+                "pilot_results_json": {},
+                "review_stage": LlmReviewStage.EVIDENCE_READY.value,
+                "human_validated_hypothesis": 0,
                 "decision": CandidateDecision.SELECTED.value
                 if len(questions_out) < count
                 else CandidateDecision.PENDING.value,
-                "decision_reason": "deterministic_template_shortlist",
+                "decision_reason": "deterministic_template_shortlist_synthetic_draft",
                 "created_at": now,
                 "updated_at": now,
             }

@@ -9,6 +9,7 @@ from data_sources.tracking.catalogue.builder import CatalogueThresholds, build_k
 from data_sources.tracking.catalogue.clusters import derive_clusters
 from data_sources.tracking.catalogue.compare import compare_with_provisional
 from data_sources.tracking.catalogue.questions import build_ai_questions
+from data_sources.tracking.catalogue.question_review import mark_questions_review_ready
 from data_sources.tracking.catalogue.workflow import (
     activate_catalogue,
     approve_catalogue,
@@ -143,6 +144,7 @@ def test_phase8_end_to_end_review_approve_activate(tmp_path):
     assert comparison["rows"] >= 55
     assert sum(comparison["counts"].values()) >= 55
 
+    mark_questions_review_ready(store, question_build_id=q_build, reviewed_by="Ting")
     approved = approve_catalogue(
         store,
         config,

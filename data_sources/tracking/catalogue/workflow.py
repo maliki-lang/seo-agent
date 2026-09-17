@@ -440,6 +440,18 @@ def approve_catalogue(
         if not q["cluster_id"]:
             raise DataQualityError(f"Question {q['question_candidate_id']} missing cluster_id")
 
+    from .question_review import evaluate_question_gates
+
+    q_gates = evaluate_question_gates(
+        store, config, question_build_id=q_build, production_count=question_count
+    )
+    if q_gates.get("gate_status") == "failed":
+        raise DataQualityError(
+            f"AI-question quality gate failed "
+            f"(critical={q_gates.get('critical_failures')}, errors={q_gates.get('error_failures')}); "
+            "complete LLM assessment, pilot, and review before approve"
+        )
+
     # Mark clusters reviewed/approved for this build.
     now = utc_now_iso()
     store.execute(

@@ -6,6 +6,7 @@ from pathlib import Path
 from data_sources.tracking.catalogue.builder import CatalogueThresholds, build_keyword_catalogue
 from data_sources.tracking.catalogue.clusters import derive_clusters
 from data_sources.tracking.catalogue.questions import build_ai_questions
+from data_sources.tracking.catalogue.question_review import mark_questions_review_ready
 from data_sources.tracking.catalogue.report import write_provenance_report
 from data_sources.tracking.catalogue.workflow import approve_catalogue, export_review, import_decisions
 from data_sources.tracking.catalogs import sync_catalogues
@@ -77,6 +78,9 @@ def _seed_build(tmp_path):
     export_review(store, build_id=built["build_id"], output=str(path), question_build_id=questions["build_id"])
     import_decisions(
         store, build_id=built["build_id"], input_path=str(path), question_build_id=questions["build_id"]
+    )
+    mark_questions_review_ready(
+        store, question_build_id=questions["build_id"], reviewed_by="Ting"
     )
     approve_catalogue(
         store,

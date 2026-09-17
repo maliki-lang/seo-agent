@@ -220,3 +220,55 @@ class CollectorStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class LlmAssessmentType(str, Enum):
+    SEMANTIC_REVIEW = "semantic_review"
+    QUESTION_REWRITE = "question_rewrite"
+    ANSWER_RUBRIC = "answer_rubric"
+    OPPORTUNITY_DIAGNOSIS = "opportunity_diagnosis"
+
+
+class LlmValidationStatus(str, Enum):
+    VALID = "valid"
+    INVALID = "invalid"
+    REJECTED = "rejected"
+
+
+class LlmReviewStage(str, Enum):
+    EVIDENCE_READY = "evidence_ready"
+    AWAITING_LLM_ASSESSMENT = "awaiting_llm_assessment"
+    LLM_ASSESSED = "llm_assessed"
+    ASSESSMENT_VALIDATED = "assessment_validated"
+    LLM_OUTPUT_INVALID = "llm_output_invalid"
+    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class QuestionSourceType(str, Enum):
+    GSC_QUESTION_QUERY = "gsc_question_query"
+    APPROVED_KEYWORD_FAMILY = "approved_keyword_family"
+    CUSTOMER_SUPPORT = "customer_support"
+    SITE_SEARCH = "site_search"
+    PRODUCT_REVIEW = "product_review"
+    PEOPLE_ALSO_ASK = "people_also_ask"
+    COMPETITOR_FAQ = "competitor_faq"
+    BUSINESS_NOMINATED = "business_nominated"
+    SYNTHETIC_TEMPLATE = "synthetic_template"
+    LLM_REWRITE = "llm_rewrite"
+    SYNTHETIC_DRAFT = "synthetic_draft"
+    SOURCE_BLOCKED = "source_blocked"
+
+
+class QuestionGateStatus(str, Enum):
+    PENDING = "pending"
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+class PilotStatus(str, Enum):
+    NOT_RUN = "not_run"
+    PASSED = "passed"
+    FAILED = "failed"
+    INCONCLUSIVE = "inconclusive"
