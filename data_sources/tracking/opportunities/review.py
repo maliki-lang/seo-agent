@@ -1,11 +1,11 @@
-"""Opportunity review export/import (Phase 15)."""
+"""Opportunity review export/import (Phase 15/16)."""
 
 from __future__ import annotations
 
 import csv
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..enums import OpportunityReviewStatus
 from ..exceptions import DataQualityError
@@ -22,6 +22,45 @@ def _load_json(value: Any, default: Any) -> Any:
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return default
+
+
+def _llm_diagnosis_fields(store: TrackingStore, assessment_id: Optional[str]) -> Dict[str, str]:
+    empty = {
+        "llm_diagnosis": "",
+        "llm_recommended_actions": "",
+        "llm_evidence_refs": "",
+        "llm_assumptions": "",
+        "llm_risk_flags": "",
+        "llm_confidence": "",
+    }
+    if not assessment_id:
+        return empty
+    rows = store.fetchall(
+        """
+        SELECT output_json, validation_status
+        FROM llm_assessments
+        WHERE assessment_id = ? AND validation_status = 'valid'
+        LIMIT 1
+        """,
+        (assessment_id,),
+    )
+    if not rows:
+        return empty
+    output = _load_json(rows[0]["output_json"], {})
+    if not isinstance(output, dict):
+        return empty
+    actions = output.get("recommended_actions") or output.get("recommended_action_list") or []
+    refs = output.get("evidence_refs") or output.get("evidence_references") or []
+    assumptions = output.get("assumptions") or []
+    risks = output.get("risk_flags") or output.get("risks") or []
+    return {
+        "llm_diagnosis": str(output.get("diagnosis") or output.get("summary") or ""),
+        "llm_recommended_actions": json.dumps(actions, sort_keys=True) if actions else "",
+        "llm_evidence_refs": json.dumps(refs, sort_keys=True) if refs else "",
+        "llm_assumptions": json.dumps(assumptions, sort_keys=True) if assumptions else "",
+        "llm_risk_flags": json.dumps(risks, sort_keys=True) if risks else "",
+        "llm_confidence": str(output.get("confidence") or output.get("llm_confidence") or ""),
+    }
 
 
 def export_opportunity_review(
@@ -63,6 +102,13 @@ def export_opportunity_review(
         "assumptions",
         "metric",
         "measurement_window",
+        "llm_assessment_id",
+        "llm_diagnosis",
+        "llm_recommended_actions",
+        "llm_evidence_refs",
+        "llm_assumptions",
+        "llm_risk_flags",
+        "llm_confidence",
         "review_status",
         "reviewer_decision",
         "reviewer_reason",
@@ -73,6 +119,7 @@ def export_opportunity_review(
         writer.writeheader()
         for row in rows:
             evidence = _load_json(row.get("supporting_evidence_json"), {})
+            llm = _llm_diagnosis_fields(store, row.get("llm_assessment_id"))
             writer.writerow(
                 {
                     "rank": row.get("portfolio_rank") or "",
@@ -93,6 +140,8 @@ def export_opportunity_review(
                     "assumptions": json.dumps(_load_json(row.get("assumptions_json"), []), sort_keys=True),
                     "metric": row.get("metric_to_watch"),
                     "measurement_window": row.get("measurement_window_json") or "",
+                    "llm_assessment_id": row.get("llm_assessment_id") or "",
+                    **llm,
                     "review_status": row.get("review_status") or "",
                     "reviewer_decision": "",
                     "reviewer_reason": "",

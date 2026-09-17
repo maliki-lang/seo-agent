@@ -128,6 +128,36 @@ def test_pool_semantic_schema_rejects_invented_page():
     assert any("gsc_clicks" in e for e in errors)
 
 
+def test_pool_semantic_schema_coerces_common_model_slips():
+    ok, errors, normalized = validate_assessment_output(
+        "pool_semantic",
+        {
+            "customer_need": "all-day comfort",
+            "search_intent": "transactional_category",
+            "business_relevance": "relevant",
+            "business_relevance_rationale": "fits footwear need",
+            "family_key": "walking shoes",
+            "is_family_representative": "true",
+            "semantic_duplicates": "none",
+            "actionability": "actionable",
+            "actionability_rationale": "page exists",
+            "recommended_target_page": "https://sunnystep.com/collections/walking-shoes",
+            "no_suitable_target": "false",
+            "confidence": 0.9,
+            "assumptions": "collection covers walking intent",
+            "risk_flags": [],
+        },
+        allowed_target_pages=["https://sunnystep.com/collections/walking-shoes"],
+    )
+    assert ok, errors
+    assert normalized["actionability"] == "optimize_existing"
+    assert normalized["confidence"] == "high"
+    assert normalized["is_family_representative"] is True
+    assert normalized["no_suitable_target"] is False
+    assert normalized["assumptions"] == ["collection covers walking intent"]
+    assert normalized["semantic_duplicates"] == []
+
+
 def test_eligible_pool_dry_run_and_apply(tmp_path):
     store, config, build_id, page = _seed(tmp_path)
     dry = assess_subjects(
@@ -141,7 +171,7 @@ def test_eligible_pool_dry_run_and_apply(tmp_path):
     )
     assert dry["dry_run"] is True
     assert dry["subjects_eligible"] >= 1
-    assert dry["prompt_version"] == "pool_semantic_v1"
+    assert dry["prompt_version"] == "pool_semantic_v2"
 
     def complete_fn(system, user, meta):
         payload = json.loads(user)

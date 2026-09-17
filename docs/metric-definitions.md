@@ -23,7 +23,17 @@ Timezone for reporting dates: `Asia/Singapore`. Storage timestamps: UTC.
 | `geo_mention_rate`             | question×engine | AI      | share of questions with ≥2/3 mentions        | ~30h        | Incomplete sets excluded              |
 | `geo_citation_rate`            | question×engine | AI      | share with ≥2/3 Sunnystep citations          |             | Host must be sunnystep.com            |
 | `geo_combined_mention_rate`    | question        | AI      | across engines using stable_rates            |             |                                       |
-| Opportunity `priority_score`   | action          | derived | Impact × Confidence ÷ Effort                 |             | SEO/GEO impacts normalized separately |
+| Opportunity `priority_score`   | action          | derived | Impact × Confidence ÷ Effort (or ÷ estimated_cost) |             | SEO/GEO impacts normalized separately |
+| `adjusted_incremental_clicks`  | experiment checkpoint | derived | observed_nonbrand_clicks − expected_without_change | GSC lag applied | Methods: matched_controls → sitewide_adjusted → before_after |
+| `actual_cost_per_incremental_click` | experiment | derived | actual_cost / adjusted_incremental_clicks |             | Null when incremental ≤ 0             |
+| `estimated_cost_per_incremental_click` | opportunity/experiment | derived | estimated_cost / expected_incremental_clicks |             | Null when expected ≤ 0                |
 
 
 Missing values must display as unavailable, not zero, in reports.
+
+### Experiment counterfactual notes
+
+- Non-branded GSC only (`is_brand = 0`).
+- Target page is excluded from site-wide control totals.
+- GEO mention/citation gains are never converted into clicks; only observed AI-referral sessions count.
+- Day-14 outcomes are provisional and cannot finalize a winner.

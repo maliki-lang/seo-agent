@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 SEMANTIC_REVIEW_PROMPT_VERSION = "semantic_review_v1"
-POOL_SEMANTIC_PROMPT_VERSION = "pool_semantic_v1"
+POOL_SEMANTIC_PROMPT_VERSION = "pool_semantic_v2"
 QUESTION_REWRITE_PROMPT_VERSION = "question_rewrite_v1"
 ANSWER_RUBRIC_PROMPT_VERSION = "answer_rubric_v1"
 OPPORTUNITY_DIAGNOSIS_PROMPT_VERSION = "opportunity_diagnosis_v1"
@@ -46,6 +46,29 @@ ALLOWED_ACTIONABILITY = {
     "no_action",
 }
 
+# Common model slips → canonical enums (still validated against allowlists).
+_ACTIONABILITY_ALIASES = {
+    "optimize_existing": "optimize_existing",
+    "optimize": "optimize_existing",
+    "optimise_existing": "optimize_existing",
+    "improve_existing": "optimize_existing",
+    "actionable": "optimize_existing",
+    "update_existing": "optimize_existing",
+    "consolidate_competing_pages": "consolidate_competing_pages",
+    "consolidate": "consolidate_competing_pages",
+    "consolidation": "consolidate_competing_pages",
+    "create_new_page": "create_new_page",
+    "new_page": "create_new_page",
+    "create_page": "create_new_page",
+    "protect_existing": "protect_existing",
+    "protect": "protect_existing",
+    "monitor_only": "monitor_only",
+    "monitor": "monitor_only",
+    "no_action": "no_action",
+    "none": "no_action",
+    "ignore": "no_action",
+}
+
 # Measured facts the model must never invent or overwrite.
 FORBIDDEN_FACT_KEYS = {
     "search_volume",
@@ -80,6 +103,11 @@ def prompt_version_for(assessment_type: str) -> str:
 def _as_str_list(value: Any, field: str, errors: List[str]) -> List[str]:
     if value is None:
         return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text.lower() in {"none", "null", "n/a", "na", "[]"}:
+            return []
+        return [text]
     if not isinstance(value, list):
         errors.append(f"{field} must be a list")
         return []
@@ -90,6 +118,53 @@ def _as_str_list(value: Any, field: str, errors: List[str]) -> List[str]:
             continue
         out.append(item.strip())
     return out
+
+
+def _coerce_confidence(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"high", "medium", "low"}:
+            return text
+        try:
+            value = float(text)
+        except ValueError:
+            return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        score = float(value)
+        if score > 1.0:
+            score = score / 100.0
+        if score >= 0.8:
+            return "high"
+        if score >= 0.5:
+            return "medium"
+        if score >= 0.0:
+            return "low"
+    return None
+
+
+def _coerce_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "yes", "1"}:
+            return True
+        if text in {"false", "no", "0"}:
+            return False
+    return None
+
+
+def _coerce_actionability(value: Any) -> Optional[str]:
+    if isinstance(value, bool):
+        return "optimize_existing" if value else "no_action"
+    if not isinstance(value, str):
+        return None
+    key = value.strip().lower().replace(" ", "_").replace("-", "_")
+    return _ACTIONABILITY_ALIASES.get(key)
 
 
 def _contains_forbidden_facts(payload: Dict[str, Any], errors: List[str]) -> None:
@@ -166,18 +241,18 @@ def validate_assessment_output(
             errors.append("business_relevance not in allowlist")
         else:
             normalized["business_relevance"] = relevance
-        actionability = output.get("actionability")
+        actionability = _coerce_actionability(output.get("actionability"))
         if actionability not in ALLOWED_ACTIONABILITY:
             errors.append("actionability not in allowlist")
         else:
             normalized["actionability"] = actionability
-        is_rep = output.get("is_family_representative")
-        if not isinstance(is_rep, bool):
+        is_rep = _coerce_bool(output.get("is_family_representative"))
+        if is_rep is None:
             errors.append("is_family_representative must be a boolean")
         else:
             normalized["is_family_representative"] = is_rep
-        no_target = output.get("no_suitable_target")
-        if not isinstance(no_target, bool):
+        no_target = _coerce_bool(output.get("no_suitable_target"))
+        if no_target is None:
             errors.append("no_suitable_target must be a boolean")
         else:
             normalized["no_suitable_target"] = no_target
@@ -207,8 +282,8 @@ def validate_assessment_output(
             errors.append("recommended_target_page outside supplied allowlist")
         else:
             normalized["recommended_target_page"] = page.strip()
-        confidence = output.get("confidence", "medium")
-        if confidence not in {"high", "medium", "low"}:
+        confidence = _coerce_confidence(output.get("confidence", "medium"))
+        if confidence is None:
             errors.append("confidence must be high|medium|low")
         else:
             normalized["confidence"] = confidence

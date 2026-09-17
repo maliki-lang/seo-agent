@@ -26,10 +26,11 @@ from .transforms.normalize import utc_now, utc_now_iso
 
 def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=30)
+    conn = sqlite3.connect(str(path), timeout=60)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 60000")
     return conn
 
 
@@ -1459,6 +1460,20 @@ class TrackingStore:
                     input_evidence_refs_json, redacted_input_json, output_json,
                     validation_status, validation_errors_json, cost_usd, latency_ms, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(assessment_type, subject_type, subject_id, prompt_version, input_fingerprint)
+                DO UPDATE SET
+                    assessment_id = excluded.assessment_id,
+                    build_id = excluded.build_id,
+                    provider = excluded.provider,
+                    model = excluded.model,
+                    input_evidence_refs_json = excluded.input_evidence_refs_json,
+                    redacted_input_json = excluded.redacted_input_json,
+                    output_json = excluded.output_json,
+                    validation_status = excluded.validation_status,
+                    validation_errors_json = excluded.validation_errors_json,
+                    cost_usd = excluded.cost_usd,
+                    latency_ms = excluded.latency_ms,
+                    created_at = excluded.created_at
                 """,
                 (
                     row["assessment_id"],
@@ -1514,6 +1529,316 @@ class TrackingStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
+            )
+
+    # --- Phase 16 experiments ---
+
+    def insert_experiment(self, row: Dict[str, Any]) -> None:
+        def _json(value: Any, default: Any) -> str:
+            if isinstance(value, str):
+                return value
+            return json.dumps(value if value is not None else default, sort_keys=True)
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO seo_experiments(
+                    experiment_id, opportunity_id, supersedes_experiment_id, status, hypothesis,
+                    action_type, target_page, target_queries_json, control_pages_json,
+                    primary_metric, guardrail_metrics_json, approved_by, approved_at, owner,
+                    planned_publish_at, published_at, baseline_start, baseline_end,
+                    estimated_incremental_clicks, estimated_cost, actual_cost, cost_currency,
+                    counterfactual_method, content_before_hash, content_after_hash,
+                    implementation_reference, catalogue_version, source_report_id,
+                    metadata_json, created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                (
+                    row["experiment_id"],
+                    row["opportunity_id"],
+                    row.get("supersedes_experiment_id"),
+                    row["status"],
+                    row["hypothesis"],
+                    row["action_type"],
+                    row["target_page"],
+                    _json(row.get("target_queries_json"), []),
+                    _json(row.get("control_pages_json"), []),
+                    row["primary_metric"],
+                    _json(row.get("guardrail_metrics_json"), []),
+                    row["approved_by"],
+                    row["approved_at"],
+                    row["owner"],
+                    row.get("planned_publish_at"),
+                    row.get("published_at"),
+                    row.get("baseline_start"),
+                    row.get("baseline_end"),
+                    row.get("estimated_incremental_clicks"),
+                    row.get("estimated_cost"),
+                    float(row.get("actual_cost") or 0),
+                    row["cost_currency"],
+                    row.get("counterfactual_method") or "sitewide_adjusted",
+                    row.get("content_before_hash"),
+                    row.get("content_after_hash"),
+                    row.get("implementation_reference"),
+                    row.get("catalogue_version"),
+                    row["source_report_id"],
+                    _json(row.get("metadata_json"), {}),
+                    row["created_at"],
+                    row["updated_at"],
+                ),
+            )
+
+    def get_experiment(self, experiment_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.fetchall(
+            "SELECT * FROM seo_experiments WHERE experiment_id = ?",
+            (experiment_id,),
+        )
+        return dict(rows[0]) if rows else None
+
+    def update_experiment(self, experiment_id: str, fields: Dict[str, Any]) -> None:
+        if not fields:
+            return
+        allowed = {
+            "status",
+            "published_at",
+            "baseline_start",
+            "baseline_end",
+            "actual_cost",
+            "cost_currency",
+            "counterfactual_method",
+            "content_before_hash",
+            "content_after_hash",
+            "implementation_reference",
+            "metadata_json",
+            "planned_publish_at",
+            "updated_at",
+        }
+        json_fields = {"metadata_json"}
+        assignments = []
+        values: List[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                raise SchemaMismatchError(f"Unsupported experiment field: {key}")
+            if key in json_fields and value is not None and not isinstance(value, str):
+                value = json.dumps(value, sort_keys=True)
+            assignments.append(f"{key} = ?")
+            values.append(value)
+        values.append(experiment_id)
+        with self.connection() as conn:
+            conn.execute(
+                f"UPDATE seo_experiments SET {', '.join(assignments)} WHERE experiment_id = ?",
+                values,
+            )
+
+    def insert_experiment_changes(self, rows: Sequence[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        values = [
+            (
+                row["change_id"],
+                row["experiment_id"],
+                row["change_type"],
+                row["target_asset"],
+                row.get("before_value"),
+                row.get("after_value"),
+                row.get("evidence_reference"),
+                row.get("implemented_by"),
+                row["implemented_at"],
+                row["created_at"],
+            )
+            for row in rows
+        ]
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO experiment_changes(
+                    change_id, experiment_id, change_type, target_asset, before_value,
+                    after_value, evidence_reference, implemented_by, implemented_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+
+    def list_experiment_changes(self, experiment_id: str) -> List[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM experiment_changes WHERE experiment_id = ? ORDER BY implemented_at",
+            (experiment_id,),
+        )
+
+    def insert_experiment_cost(self, row: Dict[str, Any]) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO experiment_costs(
+                    cost_id, experiment_id, cost_type, quantity, unit_cost, amount,
+                    currency, incurred_at, evidence_reference, notes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["cost_id"],
+                    row["experiment_id"],
+                    row["cost_type"],
+                    float(row["quantity"]),
+                    float(row["unit_cost"]),
+                    float(row["amount"]),
+                    row["currency"],
+                    row["incurred_at"],
+                    row.get("evidence_reference"),
+                    row.get("notes"),
+                    row["created_at"],
+                ),
+            )
+
+    def list_experiment_costs(self, experiment_id: str) -> List[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM experiment_costs WHERE experiment_id = ? ORDER BY incurred_at",
+            (experiment_id,),
+        )
+
+    def recalculate_experiment_actual_cost(self, experiment_id: str) -> float:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM experiment_costs WHERE experiment_id = ?",
+                (experiment_id,),
+            ).fetchone()
+            total = float(row["total"] or 0)
+            conn.execute(
+                "UPDATE seo_experiments SET actual_cost = ?, updated_at = ? WHERE experiment_id = ?",
+                (total, utc_now_iso(), experiment_id),
+            )
+            return total
+
+    def upsert_experiment_measurement(self, row: Dict[str, Any]) -> None:
+        def _json(value: Any, default: Any) -> str:
+            if isinstance(value, str):
+                return value
+            return json.dumps(value if value is not None else default, sort_keys=True)
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO experiment_measurements(
+                    measurement_id, experiment_id, checkpoint_days, window_start, window_end,
+                    baseline_clicks, observed_clicks, expected_clicks_without_change,
+                    adjusted_incremental_clicks, sitewide_trend_factor, control_trend_factor,
+                    nonbranded_impressions, ctr, average_position, organic_sessions,
+                    engaged_sessions, purchases, revenue, ai_referral_sessions,
+                    confidence_label, outcome, adjustment_method, source_references_json,
+                    assumptions_json, quality_status, calculated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(experiment_id, checkpoint_days) DO UPDATE SET
+                    measurement_id = excluded.measurement_id,
+                    window_start = excluded.window_start,
+                    window_end = excluded.window_end,
+                    baseline_clicks = excluded.baseline_clicks,
+                    observed_clicks = excluded.observed_clicks,
+                    expected_clicks_without_change = excluded.expected_clicks_without_change,
+                    adjusted_incremental_clicks = excluded.adjusted_incremental_clicks,
+                    sitewide_trend_factor = excluded.sitewide_trend_factor,
+                    control_trend_factor = excluded.control_trend_factor,
+                    nonbranded_impressions = excluded.nonbranded_impressions,
+                    ctr = excluded.ctr,
+                    average_position = excluded.average_position,
+                    organic_sessions = excluded.organic_sessions,
+                    engaged_sessions = excluded.engaged_sessions,
+                    purchases = excluded.purchases,
+                    revenue = excluded.revenue,
+                    ai_referral_sessions = excluded.ai_referral_sessions,
+                    confidence_label = excluded.confidence_label,
+                    outcome = excluded.outcome,
+                    adjustment_method = excluded.adjustment_method,
+                    source_references_json = excluded.source_references_json,
+                    assumptions_json = excluded.assumptions_json,
+                    quality_status = excluded.quality_status,
+                    calculated_at = excluded.calculated_at
+                """,
+                (
+                    row["measurement_id"],
+                    row["experiment_id"],
+                    int(row["checkpoint_days"]),
+                    row["window_start"],
+                    row["window_end"],
+                    row.get("baseline_clicks"),
+                    row.get("observed_clicks"),
+                    row.get("expected_clicks_without_change"),
+                    row.get("adjusted_incremental_clicks"),
+                    row.get("sitewide_trend_factor"),
+                    row.get("control_trend_factor"),
+                    row.get("nonbranded_impressions"),
+                    row.get("ctr"),
+                    row.get("average_position"),
+                    row.get("organic_sessions"),
+                    row.get("engaged_sessions"),
+                    row.get("purchases"),
+                    row.get("revenue"),
+                    row.get("ai_referral_sessions"),
+                    row["confidence_label"],
+                    row["outcome"],
+                    row["adjustment_method"],
+                    _json(row.get("source_references_json"), []),
+                    _json(row.get("assumptions_json"), []),
+                    row["quality_status"],
+                    row["calculated_at"],
+                ),
+            )
+
+    def get_experiment_measurement(
+        self, experiment_id: str, checkpoint_days: int
+    ) -> Optional[Dict[str, Any]]:
+        rows = self.fetchall(
+            """
+            SELECT * FROM experiment_measurements
+            WHERE experiment_id = ? AND checkpoint_days = ?
+            """,
+            (experiment_id, int(checkpoint_days)),
+        )
+        return dict(rows[0]) if rows else None
+
+    def list_experiment_measurements(self, experiment_id: str) -> List[sqlite3.Row]:
+        return self.fetchall(
+            """
+            SELECT * FROM experiment_measurements
+            WHERE experiment_id = ?
+            ORDER BY checkpoint_days
+            """,
+            (experiment_id,),
+        )
+
+    def upsert_action_type_prior(self, row: Dict[str, Any]) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO action_type_priors(
+                    action_type, completed_experiments, wins, losses, inconclusive,
+                    median_incremental_clicks, median_cost_per_incremental_click,
+                    empirical_confidence, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(action_type) DO UPDATE SET
+                    completed_experiments = excluded.completed_experiments,
+                    wins = excluded.wins,
+                    losses = excluded.losses,
+                    inconclusive = excluded.inconclusive,
+                    median_incremental_clicks = excluded.median_incremental_clicks,
+                    median_cost_per_incremental_click = excluded.median_cost_per_incremental_click,
+                    empirical_confidence = excluded.empirical_confidence,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    row["action_type"],
+                    int(row.get("completed_experiments") or 0),
+                    int(row.get("wins") or 0),
+                    int(row.get("losses") or 0),
+                    int(row.get("inconclusive") or 0),
+                    row.get("median_incremental_clicks"),
+                    row.get("median_cost_per_incremental_click"),
+                    row.get("empirical_confidence"),
+                    row["updated_at"],
+                ),
             )
 
     def fetchall(self, sql: str, params: Sequence[Any] = ()) -> List[sqlite3.Row]:

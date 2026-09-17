@@ -45,6 +45,8 @@ def build_opportunity_portfolio(
         period_end=end,
         catalogue_version=catalogue_version,
         build_id=build_id,
+        cannibalization_min_impressions=config.economics.cannibalization_min_impressions,
+        cannibalization_min_distinct_urls=config.economics.cannibalization_min_distinct_urls,
     )
     candidates = detected["candidates"]
     # Drop incomplete actionable rows early.
@@ -62,10 +64,21 @@ def build_opportunity_portfolio(
             if row.get("target_page_status") not in {"approved_new_page", "manual_review", "no_sensible_target"}:
                 rejected.append({"reason": "missing_target", "row": row.get("source_type")})
                 continue
+        # Technical/commerce diagnostics must not invent click-impact estimates.
+        if row.get("action_type") in {"technical_fix", "product_mapping", "manual_investigation"}:
+            row = dict(row)
+            row["expected_incremental_clicks"] = None
+            row["impact_score"] = 0.0
+            row["impact_estimate"] = "diagnostic_no_click_impact_estimate"
         eligible.append(row)
 
     merged = merge_overlapping_actions(eligible)
-    portfolio = select_top_ten(merged["merged"], limit=limit)
+    portfolio = select_top_ten(
+        merged["merged"],
+        limit=limit,
+        minimum_incremental_clicks=config.economics.minimum_incremental_clicks,
+        minimum_priority_score=config.economics.minimum_priority_score,
+    )
 
     now = utc_now_iso()
     window = {
@@ -146,7 +159,12 @@ def build_opportunity_portfolio(
                     },
                 )
 
-    gates = evaluate_opportunity_gates(store, report_id=report)
+    gates = evaluate_opportunity_gates(
+        store,
+        report_id=report,
+        minimum_incremental_clicks=config.economics.minimum_incremental_clicks,
+        minimum_priority_score=config.economics.minimum_priority_score,
+    )
     selection_report = {
         "candidates": len(candidates),
         "eligible": len(eligible),
@@ -156,6 +174,7 @@ def build_opportunity_portfolio(
         "portfolio": portfolio["counts"],
         "portfolio_rejected": portfolio["rejected"],
         "coverage_warning": portfolio["coverage_warning"],
+        "concentration_warning": portfolio.get("concentration_warning"),
         "blocked_detectors": detected["blocked_detectors"],
         "detector_counts": detected["detector_counts"],
         "llm_assist": bool(llm_assist),
@@ -189,6 +208,7 @@ def build_opportunity_portfolio(
         "blocked_detectors": detected["blocked_detectors"],
         "detector_counts": detected["detector_counts"],
         "coverage_warning": portfolio["coverage_warning"],
+        "concentration_warning": portfolio.get("concentration_warning"),
         "gates": gates,
         "opportunities": [
             {
