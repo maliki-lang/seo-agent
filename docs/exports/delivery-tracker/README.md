@@ -18,6 +18,6 @@ Related review artifacts:
 
 ## Honest status (do not overclaim)
 
-- Catalogue build `776935e6…` is in **review**, not fully activated.
-- Keyword/AI catalogues in DB are **provisional** (`candidate-v0.1`).
-- Phase 16 first experiment is **logged** (mules answer section), but the Shopify collection description is still **empty** — change not live; no incremental-click proof yet.
+- Keyword Catalogue export: 55 rows (Lark shows approved).
+- AI Questions export: 20 rows (16 selected / 4 rejected) with `source_candidate_id` keyword lineage + decision reasons.
+- Phase 16 first experiment is **logged** (mules answer section), but the Shopify collection description may still be empty — no incremental-click proof yet.
