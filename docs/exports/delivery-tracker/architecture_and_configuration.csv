@@ -1,0 +1,14 @@
+component_type,component_name,location_or_id,schedule,depends_on,failure_handling,recovery_owner,notes
+Base table,Keyword Catalogue,docs/exports/delivery-tracker/keyword_catalogue_55.csv,on catalogue activate,GSC + LLM semantics + Ting review,block activation if incomplete,Maliki,55 active provisional keyword rows from keyword_catalog
+Base table,AI Questions,docs/exports/delivery-tracker/ai_questions_20.csv,on catalogue activate,keyword catalogue,block AI visibility runs if empty,Maliki,20 provisional AI question rows
+Base table,Approved Lists,docs/exports/delivery-tracker/approved_lists.csv,manual version bump,brand_terms.txt + ai_referrers.yaml,fail closed on missing brand rules,Maliki,brand terms and AI referrers
+Base table,Run Logs,docs/exports/delivery-tracker/run_logs.csv,after each daily/weekly run,collectors,partial status + alert webhook,Maliki,exported from run_log
+Collector,GSC daily,data_sources/tracking/collectors,daily cron / cli daily,GSC credentials,missing recent dates unavailable not zero,Maliki,freshness ~3 days
+Collector,GA4 daily,data_sources/tracking/collectors,daily cron / cli daily,GA4 credentials,missing recent dates unavailable not zero,Maliki,freshness ~2 days
+Collector,Serper SERP,data_sources/tracking/collectors,daily cron / cli daily,SERPER_API_KEY,skip keywords on API error,Maliki,tracks active keyword catalogue
+Collector,AI visibility,data_sources/tracking/collectors,daily cron / cli daily,OpenAI/Perplexity keys,partial run on RateLimitError,Maliki,uses AI question catalogue
+Service,Opportunity portfolio v2,data_sources/tracking/opportunities,weekly / on demand,activated catalogue + evidence,gate weak/zero-impact items,Maliki,Phase 15
+Service,Experiment ledger,data_sources/tracking/experiments,after human approval,approved opportunity,no auto-publish,Maliki,Phase 16 measurement loop
+Sink,Lark weekly/ops,data_sources/tracking/sinks/lark_base.py,weekly report,LARK_BASE_APP_TOKEN + table IDs,SQLite remains authoritative,Maliki,ops view only
+Config,Tracking config,config/tracking.example.yaml + .env,n/a,secrets in .env gitignored,refuse missing required secrets,Maliki,never commit tokens
+Storage,SQLite system of record,data/tracking.db (local gitignored),continuous,migrations/,backup before migrate,Maliki,exports below are Ting-accessible mirrors

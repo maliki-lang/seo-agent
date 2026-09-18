@@ -1,0 +1,31 @@
+approval_date,approver,list_type,source_path,value,version
+,pending_ting,brand_term,,sunnystep,v1
+,pending_ting,brand_term,,sunny step,v1
+,pending_ting,brand_term,,sunny-step,v1
+,pending_ting,brand_term,,sunnysteps,v1
+,pending_ting,brand_term,,sunny steps,v1
+,pending_ting,brand_term,,gosunnystep,v1
+,pending_ting,brand_term,,go sunnystep,v1
+,pending_ting,brand_term,,sunnystep.com,v1
+,pending_ting,brand_term,,www.sunnystep.com,v1
+,pending_ting,brand_term,,sunnystep shoes,v1
+,pending_ting,brand_term,,sunnystep singapore,v1
+,pending_ting,ai_referrer,ai_referrers,chatgpt.com,v1
+,pending_ting,ai_referrer,ai_referrers,chat.openai.com,v1
+,pending_ting,ai_referrer,ai_referrers,openai.com,v1
+,pending_ting,ai_referrer,ai_referrers,perplexity.ai,v1
+,pending_ting,ai_referrer,ai_referrers,www.perplexity.ai,v1
+,pending_ting,ai_referrer,ai_referrers,gemini.google.com,v1
+,pending_ting,ai_referrer,ai_referrers,bard.google.com,v1
+,pending_ting,ai_referrer,ai_referrers,copilot.microsoft.com,v1
+,pending_ting,ai_referrer,ai_referrers,bing.com/chat,v1
+,pending_ting,ai_referrer,ai_referrers,you.com,v1
+,pending_ting,ai_referrer,ai_referrers,claude.ai,v1
+,pending_ting,ai_referrer,ai_referrers,anthropic.com,v1
+,pending_ting,ai_referrer,organic_search.mediums,organic,v1
+,pending_ting,ai_referrer,organic_search.sources,google,v1
+,pending_ting,ai_referrer,organic_search.sources,bing,v1
+,pending_ting,ai_referrer,organic_search.sources,yahoo,v1
+,pending_ting,ai_referrer,organic_search.sources,duckduckgo,v1
+,pending_ting,ai_referrer,organic_search.sources,baidu,v1
+,pending_ting,ai_referrer,organic_search.sources,yandex,v1
