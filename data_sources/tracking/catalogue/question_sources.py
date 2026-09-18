@@ -12,6 +12,7 @@ AVAILABLE_SOURCES: Set[str] = {
     QuestionSourceType.APPROVED_KEYWORD_FAMILY.value,
     QuestionSourceType.SYNTHETIC_TEMPLATE.value,
     QuestionSourceType.LLM_REWRITE.value,
+    QuestionSourceType.LLM_ASSISTED.value,
     QuestionSourceType.SYNTHETIC_DRAFT.value,
     QuestionSourceType.BUSINESS_NOMINATED.value,
 }
@@ -53,6 +54,8 @@ def is_synthetic_only(source_type: Optional[str]) -> bool:
     return (source_type or "") in {
         QuestionSourceType.SYNTHETIC_TEMPLATE.value,
         QuestionSourceType.SYNTHETIC_DRAFT.value,
+        QuestionSourceType.LLM_REWRITE.value,
+        QuestionSourceType.LLM_ASSISTED.value,
     }
 
 

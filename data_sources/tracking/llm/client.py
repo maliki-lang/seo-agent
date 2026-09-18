@@ -74,15 +74,33 @@ class LlmClient:
             ],
         }
         started = time.monotonic()
-        try:
-            response = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json=body,
-                timeout=60,
-            )
-        except requests.RequestException as exc:
-            raise TransientNetworkError(f"OpenAI network failure: {exc}") from exc
+        response = None
+        last_exc: Optional[Exception] = None
+        for attempt in range(6):
+            try:
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=body,
+                    timeout=60,
+                )
+            except requests.RequestException as exc:
+                last_exc = TransientNetworkError(f"OpenAI network failure: {exc}")
+                time.sleep(min(2 ** attempt, 30))
+                continue
+            if response.status_code == 429 or response.status_code >= 500:
+                last_exc = _map_status(response.status_code, "OpenAI")
+                # Honor Retry-After when present; otherwise exponential backoff.
+                retry_after = response.headers.get("Retry-After")
+                if retry_after and retry_after.isdigit():
+                    time.sleep(min(int(retry_after), 60))
+                else:
+                    time.sleep(min(2 ** attempt, 30))
+                continue
+            break
+        else:
+            raise last_exc or TransientNetworkError("OpenAI request failed after retries")
+
         latency_ms = int((time.monotonic() - started) * 1000)
         if not response.ok:
             raise _map_status(response.status_code, "OpenAI")

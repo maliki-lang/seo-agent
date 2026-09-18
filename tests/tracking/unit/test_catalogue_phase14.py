@@ -257,7 +257,10 @@ def test_question_rewrite_and_pilot(tmp_path):
         q = payload["evidence_packet"]["question"]
         return {
             "output": {
-                "rewritten_question": q.replace("What", "Which").rstrip("?") + " this year?",
+                "phrasings": [
+                    q.replace("What", "Which").rstrip("?") + " this year?",
+                    "How do I find comfortable everyday shoes in Singapore for this need?",
+                ],
                 "naturalness": "passed",
                 "rationale": "more natural",
                 "risk_flags": [],
@@ -277,6 +280,16 @@ def test_question_rewrite_and_pilot(tmp_path):
         limit=3,
         client=LlmClient(config, complete_fn=rewrite_fn),
     )
+    sample = store.fetchall(
+        "SELECT question, pilot_results_json, transformation_method FROM ai_question_candidates WHERE build_id = ? LIMIT 1",
+        (q_build,),
+    )[0]
+    pilot = json.loads(sample["pilot_results_json"] or "{}")
+    assert sample["transformation_method"] == "llm_assisted_draft"
+    assert isinstance(pilot.get("llm_phrasings"), list) and len(pilot["llm_phrasings"]) == 2
+    # Human pick not applied yet — original template wording remains.
+    assert "this year?" not in (sample["question"] or "")
+
 
     def fake_complete(engine, question, repetition):
         return {

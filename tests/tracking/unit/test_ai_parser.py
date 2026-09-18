@@ -29,6 +29,30 @@ def test_parser_handles_punctuation_markdown_and_false_positives():
     assert bare.cited_sunnystep is True
 
 
+def test_on_competitor_ignores_slip_on_and_particle_false_positives():
+    from data_sources.tracking.transforms.ai_parser import (
+        competitor_catalogue_from_config,
+        named_competitors,
+    )
+
+    catalogue = competitor_catalogue_from_config("config/competitors.yaml")
+    for q in (
+        "slip on",
+        "slips on",
+        "slip on style",
+        "put on shoes",
+        "yoga influencers on instagram",
+    ):
+        assert "On" not in named_competitors(q, catalogue), q
+
+    for q in (
+        "on shoes",
+        "on cloud shoes singapore",
+        "where to buy on cloud shoes in singapore",
+        "on running singapore",
+    ):
+        assert "On" in named_competitors(q, catalogue), q
+
 def test_incomplete_repetitions_are_excluded_from_rates():
     rows = [
         SimpleNamespace(

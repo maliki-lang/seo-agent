@@ -14,7 +14,7 @@ from ..enums import (
     TargetPageStatus,
 )
 from ..storage import TrackingStore
-from ..transforms.normalize import natural_key, utc_now_iso
+from ..transforms.normalize import is_homepage_page_key, natural_key, utc_now_iso
 
 _INTENT_TO_LANE = {
     "problem_solution": "need_state",
@@ -81,12 +81,22 @@ def write_pool_semantic_fields(
         fields["eligibility_status"] = EligibilityStatus.INELIGIBLE_NO_ACTIONABLE_TARGET.value
     else:
         page = normalized.get("recommended_target_page")
-        if page:
+        if page and is_homepage_page_key(page):
+            # Homepage is never an auto-selectable owner page for discovery primaries.
             fields["proposed_target_page"] = page
-        action = normalized.get("actionability") or ""
-        fields["target_page_status"] = _ACTIONABILITY_TO_TARGET.get(
-            action, TargetPageStatus.OBSERVED_PAGE_NEEDS_OPTIMIZATION.value
-        )
+            fields["target_page_status"] = TargetPageStatus.HOMEPAGE_UNRESOLVED.value
+            fields["proposed_action"] = ProposedAction.MONITOR_ONLY.value
+        elif page:
+            fields["proposed_target_page"] = page
+            action = normalized.get("actionability") or ""
+            fields["target_page_status"] = _ACTIONABILITY_TO_TARGET.get(
+                action, TargetPageStatus.OBSERVED_PAGE_NEEDS_OPTIMIZATION.value
+            )
+        else:
+            action = normalized.get("actionability") or ""
+            fields["target_page_status"] = _ACTIONABILITY_TO_TARGET.get(
+                action, TargetPageStatus.OBSERVED_PAGE_NEEDS_OPTIMIZATION.value
+            )
         # Relevance gate: irrelevant stays out of discovery portfolio.
         if normalized.get("business_relevance") == BusinessRelevanceStatus.IRRELEVANT.value:
             fields["eligibility_status"] = EligibilityStatus.INELIGIBLE_IRRELEVANT.value

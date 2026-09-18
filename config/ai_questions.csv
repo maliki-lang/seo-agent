@@ -1,21 +1,21 @@
-question_id,question,cluster,target_page,locale,active,valid_from,valid_to
-q001,What are the most comfortable shoes for walking around Singapore?,comfortable shoes (discovery),https://sunnystep.com/blogs/news/most-comfortable-shoes-singapore,en-SG,1,2026-01-01,
-q002,Which shoes are best for standing all day at work in Singapore?,work / office comfort shoes,https://sunnystep.com/blogs/news/shoes-for-standing-all-day-singapore,en-SG,1,2026-01-01,
-q003,What office shoes won't hurt after a full day at a desk?,work / office comfort shoes,https://sunnystep.com/blogs/news/office-shoes-that-dont-hurt,en-SG,1,2026-01-01,
-q004,How do I choose comfortable flats for work in Singapore?,everyday flats & loafers,https://sunnystep.com/collections/flats,en-SG,1,2026-01-01,
-q005,What should I look for in wide toe box shoes?,foot comfort education & arch support,https://sunnystep.com/blogs/news/wide-toe-box-shoes-singapore,en-SG,1,2026-01-01,
-q006,Do I need arch support if my feet ache after commuting?,foot comfort education & arch support,https://sunnystep.com/blogs/news/how-to-tell-if-you-need-arch-support,en-SG,1,2026-01-01,
-q007,What are the best comfortable loafers for women in Singapore?,everyday flats & loafers,https://sunnystep.com/collections/loafers,en-SG,1,2026-01-01,
-q008,Which walking shoes work for both office and weekend wear?,comfortable shoes (discovery),https://sunnystep.com/collections/walking-shoes,en-SG,1,2026-01-01,
-q009,What shoes are comfortable for nurses who stand all day?,work / office comfort shoes,https://sunnystep.com/blogs/news/shoes-for-nurses-singapore,en-SG,1,2026-01-01,
-q010,How can I find stylish shoes that are still comfortable?,comfortable shoes (discovery),https://sunnystep.com/blogs/news/stylish-comfortable-shoes-singapore,en-SG,1,2026-01-01,
-q011,What are good travel shoes for walking long distances in a city?,comfortable shoes (discovery),https://sunnystep.com/blogs/news/comfortable-travel-shoes-singapore,en-SG,1,2026-01-01,
-q012,Which shoe features help if I have wide feet?,everyday flats & loafers,https://sunnystep.com/blogs/news/shoes-for-wide-feet-singapore,en-SG,1,2026-01-01,
-q013,What should teachers wear if their feet hurt after school?,work / office comfort shoes,https://sunnystep.com/blogs/news/shoes-for-teachers-singapore,en-SG,1,2026-01-01,
-q014,How do I tell if a shoe has enough arch support?,foot comfort education & arch support,https://sunnystep.com/blogs/news/benefits-of-arch-support-shoes,en-SG,1,2026-01-01,
-q015,What are comfortable ballet flats that I can walk in?,everyday flats & loafers,https://sunnystep.com/collections/flats,en-SG,1,2026-01-01,
-q016,Which shoes are best for commuting on the MRT?,work / office comfort shoes,https://sunnystep.com/blogs/news/comfortable-commuting-shoes-singapore,en-SG,1,2026-01-01,
-q017,What everyday shoes are comfortable in Singapore humidity?,comfortable shoes (discovery),https://sunnystep.com/blogs/news/comfortable-shoes-singapore,en-SG,1,2026-01-01,
-q018,How should I choose shoes if my feet ache by evening?,foot comfort education & arch support,https://sunnystep.com/blogs/news/shoes-for-aching-feet-singapore,en-SG,1,2026-01-01,
-q019,What are good desk-to-dinner shoes for women?,work / office comfort shoes,https://sunnystep.com/blogs/news/desk-to-dinner-shoes-singapore,en-SG,1,2026-01-01,
-q020,Which comfortable shoe brands are worth considering in Singapore?,comfortable shoes (discovery),https://sunnystep.com/blogs/news/comfortable-shoe-brands-singapore,en-SG,1,2026-01-01,
+question_id,question,cluster,target_page,locale,active,approval_status
+defe7f3a82a28fa7aff02efcab1005344d11856ae3b4e06f645d7e4100d6c78d,Are mules comfortable enough for all-day walking compared with cushioned everyday shoes?,comparison,https://sunnystep.com/collections/mules,en-SG,1,activated
+ed00a45c99f997d0063fc1b36a9975003c391e031244dd2b974e4c664807df8c,Can mules be comfortable enough for a full work day?,problem_situation,https://sunnystep.com/collections/mules,en-SG,1,activated
+84bf518fb55428eb73ff84c52418732c7cde031cba06a2c1f187a7f5cc57c52f,How do I choose comfortable ladies shoes that stay comfortable in Singapore's heat and humidity?,product_selection,https://sunnystep.com/collections/walking-shoes-women,en-SG,1,rejected
+6534f5b215de5cfae3cec7884b1de89f9a779eb8c2bf6d704c58b56776ae90a4,How do I choose comfortable white sneakers that still work with dresses?,feature_education,https://my.sunnystep.com/products/balance-runner,en-SG,1,activated
+fd7fb6485b032bd4c26292421a6595ff574e470236265312ab30839cc374b81d,How do I choose comfortable women's walking shoes with arch support?,problem_situation,https://sunnystep.com/products/balance-walker,en-SG,1,activated
+e1dd70c8f4e9dca3b46c26d3a102f3879952e76f640d515fb002e2110d44a219,How do I choose comfortable work shoes with arch support?,problem_situation,https://sunnystep.com/products/balance-walker?variant=44204239552572,en-SG,1,activated
+02471157d406b045eb2847bac30ff878188d945e8e2ae6f4333fc182a9339ad2,How do I choose men's mules that stay comfortable in Singapore weather?,product_selection,https://sunnystep.com/collections/men-mules,en-SG,1,activated
+b0a849d3d300155cb896bbd1936e165d598690d91fce854e2903fdb1ae168bcb,How do I choose walking sandals for all-day wear in Singapore?,product_selection,https://sunnystep.com/products/balance-crossover-sandal,en-SG,1,activated
+8faea25acf0bb8bdd6d4f7aa340452ceebc7a42991e530ebec486421c65c2eea,How do I choose women's walking shoes for Singapore heat and humidity?,product_selection,https://sunnystep.com/collections/walking-shoes-women,en-SG,1,activated
+96eb9d255a9fe9c54bb791cac2c95a586189c28f9569a85a211851fd3eb28235,How do cushioned flats with arch support compare with everyday cushioned shoes for all-day wear?,comparison,https://sunnystep.com/products/balance-flex-ballerina?variant=44204229328956,en-SG,1,activated
+9a43a6e9eba9ccc3ab7bde266161f7dd3761d1ca5184d5c7d053dc129fa9bf33,How do sliders/slippers compare with cushioned everyday shoes for all-day comfort?,comparison,https://sunnystep.com/collections/sliders,en-SG,1,activated
+82e2e28a4e3396a242a2d178b98a0809c250a3e0d8335f373514890a40b6fcc6,What are the most comfortable sneaker shop options for everyday wear in Singapore?,recommendation,https://sunnystep.com/,en-SG,1,rejected
+ac1361e876bc0fe140e083b295b4718945e2fd643c994d298bba8cdfb6cdd614,What formal shoes with arch support work for long office days and after-work walks in Singapore?,work_lifestyle,https://sunnystep.com/products/balance-dress-derby?variant=44204223758396,en-SG,1,activated
+9a56141a7804959b39a05eb5e8f0039a62262a7a4c14b02a688c15649c5a4140,What should I check for when buying sandals with arch support?,feature_education,https://sunnystep.com/products/balance-crossover-sandal?variant=44204250824764,en-SG,1,activated
+6f1dcb7a1b386e520d81d023853fa42691c675afb10bf736c51f92513ae7c575,What should I look for in loafers if I'll be walking a lot?,feature_education,https://sunnystep.com/products/balance-penny-loafer?variant=44204233687100,en-SG,1,activated
+eb3d912f5934fb9ad4efabc8e004b2b8973c69c419bef4024a53d316650efbe0,What should I look for in shoes if I need more comfort for scholl shoes at work?,problem_situation,https://sunnystep.com/,en-SG,1,rejected
+96a4ae418ee92ff944fb83d2ff9f1555bf9b66a4f3e2ccb86c1288d537fe2049,What should I look for in shoes if I need more comfort for where to buy on cloud shoes in at work?,problem_situation,https://sunnystep.com/pages/store-locations,en-SG,1,rejected
+8c23e1d04da69a2a50ac9c00bccf9e80018fbfe56065f2131822373d63d5ad34,What should I look for in shoes if heel discomfort bothers me on long office days in Singapore?,work_lifestyle,https://sunnystep.com/products/balance-air-sneaker?variant=44204248170556,en-SG,1,activated
+546fc974cff8470cdfe96da1ef216636943f6e3dc2aeb5ac3d990c35df6a206a,Which formal shoes stay comfortable for daily wear in Singapore?,recommendation,https://sunnystep.com/products/balance-hazel-loafer?variant=45419533434940,en-SG,1,activated
+f64a4b1830e2852052cf9893931d3fee02deff02b1f58abdb83e148e4d10af65,Which oxford-style walking shoes work for office days and after-work walks in Singapore?,work_lifestyle,https://sunnystep.com/products/balance-oxford,en-SG,1,activated

@@ -460,6 +460,24 @@ def build_parser() -> argparse.ArgumentParser:
     export_q_review.add_argument("--output", required=True)
     export_q_review.set_defaults(handler="catalogue_export_question_review")
 
+    export_phrasing = catalogue_sub.add_parser(
+        "export-llm-phrasings",
+        parents=[shared],
+        help="Export LLM-assisted phrasing options for human pick (template|1|2|custom)",
+    )
+    export_phrasing.add_argument("--question-build-id", required=True)
+    export_phrasing.add_argument("--output", required=True)
+    export_phrasing.set_defaults(handler="catalogue_export_llm_phrasings")
+
+    import_phrasing = catalogue_sub.add_parser(
+        "import-llm-phrasings",
+        parents=[shared],
+        help="Import human phrasing picks; sets source_type=llm_assisted when LLM wording is chosen",
+    )
+    import_phrasing.add_argument("--question-build-id", required=True)
+    import_phrasing.add_argument("--input", required=True)
+    import_phrasing.set_defaults(handler="catalogue_import_llm_phrasings")
+
     q_check = catalogue_sub.add_parser(
         "check-questions",
         parents=[shared],
@@ -699,6 +717,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from .catalogue.compare import compare_with_provisional
             from .catalogue.enrich import enrich_build_with_ga4
             from .catalogue.question_pilot import pilot_ai_questions
+            from .catalogue.question_phrasing_review import (
+                export_llm_phrasing_review,
+                import_llm_phrasing_decisions,
+            )
             from .catalogue.question_review import evaluate_question_gates, export_question_review
             from .catalogue.questions import build_ai_questions
             from .catalogue.validate_serp import validate_serp_for_build
@@ -922,6 +944,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     runner.store,
                     question_build_id=args.question_build_id,
                     output=args.output,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "export-llm-phrasings":
+                payload = export_llm_phrasing_review(
+                    runner.store,
+                    question_build_id=args.question_build_id,
+                    output=args.output,
+                )
+                _print(payload, as_json)
+                return 0
+            if args.catalogue_command == "import-llm-phrasings":
+                payload = import_llm_phrasing_decisions(
+                    runner.store,
+                    question_build_id=args.question_build_id,
+                    input_path=args.input,
                 )
                 _print(payload, as_json)
                 return 0
