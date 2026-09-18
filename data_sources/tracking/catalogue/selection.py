@@ -25,9 +25,11 @@ from .quality_gates import evaluate_portfolio_gates
 from .scoring import hard_exclusion_reasons, score_candidate_v2, score_v2_update_fields
 from .selection_helpers import (
     ACTIONABLE_TARGETS,
+    auto_select_block_reasons,
     coverage_tags,
     incremental_coverage_for_candidate,
     is_broad_head_term,
+    topic_key,
 )
 
 _ELIGIBLE = {
@@ -36,7 +38,17 @@ _ELIGIBLE = {
 }
 
 # Residual / redistributed fills must clear this floor; better to underfill than pad with junk.
-_MIN_SCORE_FOR_EXTRA_FILL = 0.45
+_MIN_SCORE_FOR_EXTRA_FILL = 0.55
+_MIN_INCR_FOR_EXTRA_FILL = 0.55
+_MIN_IMPRESSIONS_FOR_EXTRA_FILL = 10
+
+_PENDING_CLEANUP = {
+    EligibilityStatus.INELIGIBLE_DUPLICATE_VARIANT.value: CandidateDecision.DEFERRED.value,
+    EligibilityStatus.INELIGIBLE_IRRELEVANT.value: CandidateDecision.DEFERRED.value,
+    EligibilityStatus.INELIGIBLE_UNSUPPORTED_CLAIM.value: CandidateDecision.DEFERRED.value,
+    EligibilityStatus.INELIGIBLE_NO_ACTIONABLE_TARGET.value: CandidateDecision.DEFERRED.value,
+    EligibilityStatus.INELIGIBLE_BRAND.value: CandidateDecision.REJECTED.value,
+}
 
 _LANE_ORDER = [
     StrategicLane.NEED_STATE.value,
@@ -89,17 +101,79 @@ def _rank_tuple(
     preselected_boost = 1 if int(cand.get("serp_preselected") or 0) else 0
     actionable_boost = 1 if (cand.get("target_page_status") or "") in ACTIONABLE_TARGETS else 0
     llm_boost = 1 if (cand.get("semantic_authority") or "") == SemanticAuthority.LLM.value else 0
+    # Evidence before thin Serper-only clones: impressions/clicks outrank raw score ties.
     return (
+        float(cand.get("gsc_impressions") or 0),
+        float(cand.get("gsc_clicks") or 0),
         score if score is not None else -1.0,
         llm_boost,
         actionable_boost,
         preselected_boost,
-        float(cand.get("gsc_impressions") or 0),
-        float(cand.get("gsc_clicks") or 0),
-        cand.get("normalized_keyword") or "",
         incr,
+        cand.get("normalized_keyword") or "",
         breakdown,
     )
+
+
+def _extra_fill_allowed(
+    cand: Dict[str, Any],
+    *,
+    covered: Set[str],
+    policy: CatalogueSelectionPolicy,
+    require_serper: bool,
+) -> bool:
+    """Fallback/residual fills need novel coverage + real evidence — never pad with near-dupes."""
+    key = _rank_tuple(cand, policy, covered=covered, require_serper=require_serper)
+    score = key[2]
+    incr = key[6]
+    impr = key[0]
+    if score < _MIN_SCORE_FOR_EXTRA_FILL:
+        return False
+    if incr < _MIN_INCR_FOR_EXTRA_FILL:
+        return False
+    if impr < _MIN_IMPRESSIONS_FOR_EXTRA_FILL:
+        return False
+    return True
+
+
+def sanitize_pending_queue(
+    store: TrackingStore,
+    *,
+    build_id: str,
+    now: Optional[str] = None,
+) -> Dict[str, int]:
+    """Move ineligible rows out of pending so the review shortlist is eligible alternates only."""
+    ts = now or utc_now_iso()
+    moved = {"deferred": 0, "rejected": 0}
+    rows = store.fetchall(
+        """
+        SELECT candidate_id, eligibility_status, brand_match_type, canonical_keyword
+        FROM keyword_candidates
+        WHERE build_id = ? AND decision = ?
+        """,
+        (build_id, CandidateDecision.PENDING.value),
+    )
+    for row in rows:
+        elig = row["eligibility_status"] or ""
+        decision = _PENDING_CLEANUP.get(elig)
+        kw = (row["canonical_keyword"] or "").lower()
+        if not decision and (row["brand_match_type"] or "") == "fuzzy_suspect" and "sunny" in kw:
+            decision = CandidateDecision.REJECTED.value
+        if not decision:
+            continue
+        store.update_keyword_candidate(
+            row["candidate_id"],
+            {
+                "decision": decision,
+                "decision_reason": f"pending_cleanup:{elig or 'fuzzy_sunny'}",
+                "review_group": None,
+                "portfolio_slot": None,
+                "alternate_rank": None,
+                "updated_at": ts,
+            },
+        )
+        moved[decision] = moved.get(decision, 0) + 1
+    return moved
 
 
 def _lane_cap_allows(
@@ -147,6 +221,7 @@ def _eligible_primaries(
         if target_status not in ACTIONABLE_TARGETS:
             continue
         exclusions = list(hard_exclusion_reasons(cand))
+        exclusions.extend(auto_select_block_reasons(cand))
         if require_serper and not _has_serper(cand):
             exclusions.append("missing_required_serper_validation")
         if exclusions:
@@ -324,6 +399,7 @@ def select_portfolio(
     lane_counts: Dict[str, int] = defaultdict(int)
     lane_rank: Dict[str, int] = defaultdict(int)
     used_families: Set[str] = set()
+    used_topics: Set[str] = set()
     covered: Set[str] = set()
     broad_count = 0
     shortages: Dict[str, int] = {}
@@ -332,6 +408,9 @@ def select_portfolio(
         nonlocal broad_count
         fam_id = cand.get("family_id")
         if fam_id and fam_id in used_families:
+            return False
+        topic = topic_key(cand)
+        if topic and topic in used_topics:
             return False
         lane = cand["strategic_lane"]
         is_broad = is_broad_head_term(cand, selection_policy)
@@ -346,7 +425,9 @@ def select_portfolio(
         rank_info = _rank_tuple(
             cand, selection_policy, covered=covered, require_serper=must_serper
         )
-        score, _, _, _, _, _, _, incr, breakdown = rank_info
+        score = rank_info[2]
+        incr = rank_info[6]
+        breakdown = rank_info[8]
         if breakdown.hard_excluded or score is None:
             return False
         selected.append(cand)
@@ -354,6 +435,8 @@ def select_portfolio(
         lane_rank[lane] += 1
         if fam_id:
             used_families.add(fam_id)
+        if topic:
+            used_topics.add(topic)
         if is_broad:
             broad_count += 1
         tags = coverage_tags(cand, selection_policy)
@@ -366,6 +449,7 @@ def select_portfolio(
             "lane_rank": lane_rank[lane],
             "coverage_tags_added": sorted(tags),
             "is_broad_head_term": is_broad,
+            "topic_key": topic,
         }
         return True
 
@@ -383,6 +467,9 @@ def select_portfolio(
                     continue
                 fam_id = cand.get("family_id")
                 if fam_id and fam_id in used_families:
+                    continue
+                topic = topic_key(cand)
+                if topic and topic in used_topics:
                     continue
                 is_broad = is_broad_head_term(cand, selection_policy)
                 if not _lane_cap_allows(
@@ -407,10 +494,16 @@ def select_portfolio(
                 break
         shortages[lane] = max(0, quota - filled)
 
+    # Only redistribute into lanes that still have quota room via caps — never pad
+    # empty use_case/strategic_gap shortages with near-duplicate product/commercial clones.
     remaining = selection_policy.selected_limit - len(selected)
     for lane in selection_policy.fallback_order:
         if remaining <= 0:
             break
+        # Skip lanes that already met their quota; filling them further is overflow padding.
+        quota = int(selection_policy.lane_quotas.get(lane, 0))
+        if quota > 0 and lane_counts.get(lane, 0) >= quota:
+            continue
         pool = list(by_lane.get(lane, []))
         while remaining > 0:
             best = None
@@ -421,6 +514,9 @@ def select_portfolio(
                 fam_id = cand.get("family_id")
                 if fam_id and fam_id in used_families:
                     continue
+                topic = topic_key(cand)
+                if topic and topic in used_topics:
+                    continue
                 is_broad = is_broad_head_term(cand, selection_policy)
                 if not _lane_cap_allows(
                     lane,
@@ -430,15 +526,19 @@ def select_portfolio(
                     policy=selection_policy,
                 ):
                     continue
+                if not _extra_fill_allowed(
+                    cand,
+                    covered=covered,
+                    policy=selection_policy,
+                    require_serper=must_serper,
+                ):
+                    continue
                 key = _rank_tuple(
                     cand, selection_policy, covered=covered, require_serper=must_serper
-                )
-                if key[0] < _MIN_SCORE_FOR_EXTRA_FILL:
-                    continue
-                cmp_key = key[:6]
-                if best is None or cmp_key > best_key:
+                )[:6]
+                if best is None or key > best_key:
                     best = cand
-                    best_key = cmp_key
+                    best_key = key
             if best is None:
                 break
             if try_add(best, reason=f"fallback_redistribute:{lane}"):
@@ -446,40 +546,7 @@ def select_portfolio(
             else:
                 break
 
-    if len(selected) < selection_policy.selected_limit:
-        leftovers = [c for c in primaries if c["candidate_id"] not in selection_meta]
-        while len(selected) < selection_policy.selected_limit:
-            best = None
-            best_key = None
-            for cand in leftovers:
-                if cand["candidate_id"] in selection_meta:
-                    continue
-                fam_id = cand.get("family_id")
-                if fam_id and fam_id in used_families:
-                    continue
-                lane = cand["strategic_lane"]
-                is_broad = is_broad_head_term(cand, selection_policy)
-                if not _lane_cap_allows(
-                    lane,
-                    lane_counts=lane_counts,
-                    broad_count=broad_count,
-                    is_broad=is_broad,
-                    policy=selection_policy,
-                ):
-                    continue
-                key = _rank_tuple(
-                    cand, selection_policy, covered=covered, require_serper=must_serper
-                )
-                if key[0] < _MIN_SCORE_FOR_EXTRA_FILL:
-                    continue
-                cmp_key = key[:6]
-                if best is None or cmp_key > best_key:
-                    best = cand
-                    best_key = cmp_key
-            if best is None:
-                break
-            if not try_add(best, reason="residual_fill"):
-                break
+    # Residual fill removed: underfilling is preferred over near-duplicate padding (Ting).
 
     selected = selected[: selection_policy.selected_limit]
     selected_ids = {c["candidate_id"] for c in selected}
@@ -497,6 +564,9 @@ def select_portfolio(
             fam_id = cand.get("family_id")
             if fam_id and fam_id in used_families:
                 continue
+            topic = topic_key(cand)
+            if topic and topic in used_topics:
+                continue
             key = _rank_tuple(
                 cand, selection_policy, covered=covered, require_serper=must_serper
             )[:6]
@@ -508,6 +578,9 @@ def select_portfolio(
             fam_id = best_alt.get("family_id")
             if fam_id:
                 used_families.add(fam_id)
+            topic = topic_key(best_alt)
+            if topic:
+                used_topics.add(topic)
 
     if len(alternate_candidates) < selection_policy.alternate_limit:
         leftovers = [
@@ -528,9 +601,14 @@ def select_portfolio(
             fam_id = cand.get("family_id")
             if fam_id and fam_id in used_families:
                 continue
+            topic = topic_key(cand)
+            if topic and topic in used_topics:
+                continue
             alternate_candidates.append(cand)
             if fam_id:
                 used_families.add(fam_id)
+            if topic:
+                used_topics.add(topic)
 
     alternate_candidates = alternate_candidates[: selection_policy.alternate_limit]
 
@@ -595,6 +673,8 @@ def select_portfolio(
             }
         )
         store.update_keyword_candidate(cand["candidate_id"], fields)
+
+    pending_cleanup = sanitize_pending_queue(store, build_id=build_id, now=now)
 
     branded = _branded_benchmarks(
         candidates, limit=selection_policy.branded_benchmark_limit
@@ -665,6 +745,7 @@ def select_portfolio(
         "alternate_candidate_ids": [c["candidate_id"] for c in alternate_candidates],
         "branded_benchmarks": branded,
         "manual_review_exceptions_count": len(exception_rows),
+        "pending_cleanup": pending_cleanup,
         "comparison_v1_v2": comparison,
         "selected_at": now,
     }

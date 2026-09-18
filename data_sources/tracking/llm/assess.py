@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -48,8 +49,11 @@ SYSTEM_PROMPTS = {
         "Return JSON only."
     ),
     LlmAssessmentType.QUESTION_REWRITE.value: (
-        "Rewrite into natural non-branded customer language using only supplied evidence. "
-        "Do not invent demand metrics. Avoid medical cure/treat/FDA claims. Return JSON only."
+        "Propose 1–2 natural non-branded customer questions a shopper might ask an AI assistant. "
+        "Use ONLY the supplied keyword/topic and evidence. Do not invent demand metrics or pages. "
+        "Avoid medical cure/treat/diagnose/FDA claims. Keep Singapore comfort-footwear context. "
+        "Return JSON only with keys: phrasings (array of 1–2 strings), naturalness "
+        "(passed|failed|pending), rationale (string), risk_flags (array of strings)."
     ),
     LlmAssessmentType.ANSWER_RUBRIC.value: (
         "Draft expected answer elements for an AI-question benchmark from supplied evidence only. "
@@ -157,7 +161,28 @@ def _subject_rows(
         )
         if scope == "reviewed_shortlist":
             rows = [r for r in rows if r["decision"] == CandidateDecision.SELECTED.value]
-        return [dict(r) for r in rows[:limit]]
+        out: List[Dict[str, Any]] = []
+        for r in rows[:limit]:
+            row = dict(r)
+            source_candidates = _load_json(row.get("source_candidate_ids"), [])
+            parent_keyword = ""
+            if source_candidates:
+                parent = store.fetchall(
+                    """
+                    SELECT normalized_keyword, canonical_keyword
+                    FROM keyword_candidates WHERE candidate_id = ?
+                    """,
+                    (source_candidates[0],),
+                )
+                if parent:
+                    parent_keyword = (
+                        parent[0]["normalized_keyword"]
+                        or parent[0]["canonical_keyword"]
+                        or ""
+                    )
+            row["parent_keyword"] = parent_keyword
+            out.append(row)
+        return out
 
     if assessment_type == LlmAssessmentType.OPPORTUNITY_DIAGNOSIS.value:
         rows = store.fetchall(
@@ -262,14 +287,24 @@ def _build_packet(row: Dict[str, Any], assessment_type: str) -> Dict[str, Any]:
         refs = [f"question:{row['question_candidate_id']}", f"cluster:{row.get('cluster_id') or ''}"]
         if page:
             refs.append(f"page:{page}")
+        source_candidates = _load_json(row.get("source_candidate_ids"), [])
         return {
             "subject_id": row["question_candidate_id"],
             "subject_type": "question_candidate",
+            "template_question": row.get("question"),
             "question": row.get("question"),
+            "parent_keyword": row.get("parent_keyword") or "",
             "intent": row.get("intent"),
             "source_type": row.get("source_type"),
+            "source_candidate_ids": source_candidates,
             "allowlisted_target_pages": [p for p in [page] if p],
             "evidence_refs": [r for r in refs if not r.endswith(":")],
+            "constraints": [
+                "must_stay_tied_to_parent_keyword",
+                "non_branded",
+                "no_medical_absolutes",
+                "singapore_context_ok",
+            ],
             "existing_expected_answer_elements": _load_json(
                 row.get("expected_answer_elements_json"), []
             ),
@@ -382,6 +417,7 @@ def assess_subjects(
     model: Optional[str] = None,
     client: Optional[LlmClient] = None,
     cost_ledger: Optional[CostLedger] = None,
+    workers: int = 1,
 ) -> Dict[str, Any]:
     if dry_run:
         return estimate_assessment_cost(
@@ -405,167 +441,115 @@ def assess_subjects(
     if not subjects:
         raise DataQualityError(f"No subjects found for build_id={build_id} scope={scope}")
 
+    worker_count = max(1, int(workers or 1))
+
+    def _one(row: Dict[str, Any]) -> Dict[str, Any]:
+        return _assess_one_subject(
+            store,
+            llm=llm,
+            ledger=ledger,
+            build_id=build_id,
+            assessment_type=assessment_type,
+            prompt_version=prompt_version,
+            row=row,
+        )
+
     results: List[Dict[str, Any]] = []
     created = 0
     reused = 0
     invalid = 0
     blocked = 0
 
-    for row in subjects:
-        packet = _build_packet(row, assessment_type)
-        subject_type = packet["subject_type"]
-        subject_id = str(packet["subject_id"])
-        fingerprint = sha256_hex(canonical_json(packet))
-        existing = store.fetchall(
-            """
-            SELECT * FROM llm_assessments
-            WHERE assessment_type = ? AND subject_type = ? AND subject_id = ?
-              AND prompt_version = ? AND input_fingerprint = ?
-            """,
-            (assessment_type, subject_type, subject_id, prompt_version, fingerprint),
-        )
-        if existing and existing[0]["validation_status"] == LlmValidationStatus.VALID.value:
-            reused += 1
-            results.append(
-                {
-                    "subject_id": subject_id,
-                    "assessment_id": existing[0]["assessment_id"],
-                    "status": "reused_valid",
-                }
-            )
-            continue
-
-        # Mark awaiting before call so unavailable model leaves an auditable block.
-        _set_review_stage(
-            store,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            stage=LlmReviewStage.AWAITING_LLM_ASSESSMENT.value,
-            assessment_id=None,
-        )
-
-        user_payload = {
-            "assessment_type": assessment_type,
-            "prompt_version": prompt_version,
-            "evidence_packet": packet,
-            "required_output_keys_hint": _output_hint(assessment_type),
-        }
-        if assessment_type == LlmAssessmentType.POOL_SEMANTIC.value:
-            user_payload["allowed_enums"] = {
-                "search_intent": sorted(ALLOWED_SEARCH_INTENTS),
-                "business_relevance": sorted(ALLOWED_BUSINESS_RELEVANCE),
-                "actionability": sorted(ALLOWED_ACTIONABILITY),
-                "confidence": ["high", "medium", "low"],
-            }
-        try:
-            completion = llm.complete(
-                system=SYSTEM_PROMPTS[assessment_type],
-                user=canonical_json(user_payload),
-            )
-        except Exception as exc:  # noqa: BLE001 — leave item blocked, continue others
-            blocked += 1
-            results.append(
-                {
-                    "subject_id": subject_id,
-                    "status": LlmReviewStage.AWAITING_LLM_ASSESSMENT.value,
-                    "error": str(exc),
-                }
-            )
-            continue
-
-        cost = Decimal(str(completion.get("cost_usd") or "0"))
-        try:
-            ledger.add(cost, source=f"llm:{assessment_type}")
-        except CostLimitExceeded as exc:
-            blocked += 1
-            results.append(
-                {
-                    "subject_id": subject_id,
-                    "status": LlmReviewStage.AWAITING_LLM_ASSESSMENT.value,
-                    "error": str(exc),
-                }
-            )
-            break
-
-        ok, errors, normalized = validate_assessment_output(
-            assessment_type,
-            completion.get("output") or {},
-            allowed_target_pages=packet.get("allowlisted_target_pages") or [],
-            allowed_evidence_refs=packet.get("evidence_refs") or [],
-        )
-        assessment_id = str(uuid.uuid4())
-        validation_status = (
-            LlmValidationStatus.VALID.value if ok else LlmValidationStatus.INVALID.value
-        )
-        store.insert_llm_assessment(
-            {
-                "assessment_id": assessment_id,
-                "assessment_type": assessment_type,
-                "subject_type": subject_type,
-                "subject_id": subject_id,
-                "build_id": build_id,
-                "prompt_version": prompt_version,
-                "provider": completion.get("provider") or llm.provider,
-                "model": completion.get("model") or llm.model,
-                "input_fingerprint": fingerprint,
-                "input_evidence_refs_json": packet.get("evidence_refs") or [],
-                "redacted_input_json": packet,
-                "output_json": normalized if ok else (completion.get("output") or {}),
-                "validation_status": validation_status,
-                "validation_errors_json": errors,
-                "cost_usd": float(cost),
-                "latency_ms": completion.get("latency_ms"),
-                "created_at": utc_now_iso(),
-            }
-        )
-        created += 1
-        if ok:
-            stage = LlmReviewStage.ASSESSMENT_VALIDATED.value
-            _apply_validated_side_effects(
-                store,
-                assessment_type=assessment_type,
-                subject_type=subject_type,
-                subject_id=subject_id,
-                normalized=normalized,
-                assessment_id=assessment_id,
-            )
-        else:
-            stage = LlmReviewStage.LLM_OUTPUT_INVALID.value
-            invalid += 1
-            if (
-                assessment_type == LlmAssessmentType.POOL_SEMANTIC.value
-                and subject_type == "keyword_candidate"
-            ):
-                from ..catalogue.apply_semantics import mark_awaiting_or_invalid
-
-                mark_awaiting_or_invalid(
-                    store,
-                    candidate_id=subject_id,
-                    authority=SemanticAuthority.LLM_INVALID.value,
-                    assessment_id=assessment_id,
-                )
-        _set_review_stage(
-            store,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            stage=stage,
-            assessment_id=assessment_id,
-        )
-        results.append(
-            {
-                "subject_id": subject_id,
-                "assessment_id": assessment_id,
-                "status": stage,
-                "validation_status": validation_status,
-                "validation_errors": errors,
-            }
-        )
+    if worker_count == 1:
+        for row in subjects:
+            item = _one(row)
+            results.append(item)
+            status = item.get("status")
+            if status == "reused_valid":
+                reused += 1
+            elif status == LlmReviewStage.AWAITING_LLM_ASSESSMENT.value:
+                blocked += 1
+            else:
+                created += 1
+                if item.get("validation_status") == LlmValidationStatus.INVALID.value:
+                    invalid += 1
+            if item.get("stop"):
+                break
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            futures = [pool.submit(_one, row) for row in subjects]
+            for fut in as_completed(futures):
+                try:
+                    item = fut.result()
+                except Exception as exc:  # noqa: BLE001 — keep other workers running
+                    blocked += 1
+                    results.append(
+                        {
+                            "subject_id": "unknown",
+                            "status": LlmReviewStage.AWAITING_LLM_ASSESSMENT.value,
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+                results.append(item)
+                status = item.get("status")
+                if status == "reused_valid":
+                    reused += 1
+                elif status == LlmReviewStage.AWAITING_LLM_ASSESSMENT.value:
+                    blocked += 1
+                else:
+                    created += 1
+                    if item.get("validation_status") == LlmValidationStatus.INVALID.value:
+                        invalid += 1
 
     family_report = None
     if assessment_type == LlmAssessmentType.POOL_SEMANTIC.value and not dry_run:
-        from ..catalogue.apply_semantics import apply_llm_family_regroup, mark_deterministic_fallback
+        from ..catalogue.apply_semantics import (
+            apply_llm_family_regroup,
+            mark_deterministic_fallback,
+            write_pool_semantic_fields,
+        )
+
+        # Repair any valid assessments whose candidate row lost llm authority
+        # (can happen under parallel SQLite write contention).
+        repaired = 0
+        for row in store.fetchall(
+            """
+            SELECT a.assessment_id, a.subject_id, a.output_json, c.semantic_authority
+            FROM llm_assessments a
+            JOIN keyword_candidates c ON c.candidate_id = a.subject_id
+            WHERE a.build_id = ?
+              AND a.assessment_type = ?
+              AND a.prompt_version = ?
+              AND a.validation_status = ?
+              AND COALESCE(c.semantic_authority, '') != ?
+            """,
+            (
+                build_id,
+                assessment_type,
+                prompt_version,
+                LlmValidationStatus.VALID.value,
+                SemanticAuthority.LLM.value,
+            ),
+        ):
+            output = row["output_json"]
+            if isinstance(output, str):
+                try:
+                    output = json.loads(output)
+                except json.JSONDecodeError:
+                    continue
+            if not isinstance(output, dict):
+                continue
+            write_pool_semantic_fields(
+                store,
+                candidate_id=row["subject_id"],
+                normalized=output,
+                assessment_id=row["assessment_id"],
+            )
+            repaired += 1
 
         family_report = apply_llm_family_regroup(store, build_id=build_id)
+        family_report["repaired_llm_authority"] = repaired
         mark_deterministic_fallback(store, build_id=build_id)
 
     return {
@@ -576,6 +560,7 @@ def assess_subjects(
         "prompt_version": prompt_version,
         "provider": llm.provider,
         "model": llm.model,
+        "workers": worker_count,
         "created": created,
         "reused": reused,
         "invalid": invalid,
@@ -587,6 +572,151 @@ def assess_subjects(
             "Pool-semantic LLM owns intent/relevance/family/target decisions when valid; "
             "measured facts and portfolio quotas remain deterministic. Human approval still required."
         ),
+    }
+
+
+def _assess_one_subject(
+    store: TrackingStore,
+    *,
+    llm: LlmClient,
+    ledger: CostLedger,
+    build_id: str,
+    assessment_type: str,
+    prompt_version: str,
+    row: Dict[str, Any],
+) -> Dict[str, Any]:
+    packet = _build_packet(row, assessment_type)
+    subject_type = packet["subject_type"]
+    subject_id = str(packet["subject_id"])
+    fingerprint = sha256_hex(canonical_json(packet))
+    existing = store.fetchall(
+        """
+        SELECT * FROM llm_assessments
+        WHERE assessment_type = ? AND subject_type = ? AND subject_id = ?
+          AND prompt_version = ? AND input_fingerprint = ?
+        """,
+        (assessment_type, subject_type, subject_id, prompt_version, fingerprint),
+    )
+    if existing and existing[0]["validation_status"] == LlmValidationStatus.VALID.value:
+        return {
+            "subject_id": subject_id,
+            "assessment_id": existing[0]["assessment_id"],
+            "status": "reused_valid",
+        }
+
+    # Mark awaiting before call so unavailable model leaves an auditable block.
+    _set_review_stage(
+        store,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        stage=LlmReviewStage.AWAITING_LLM_ASSESSMENT.value,
+        assessment_id=None,
+    )
+
+    user_payload = {
+        "assessment_type": assessment_type,
+        "prompt_version": prompt_version,
+        "evidence_packet": packet,
+        "required_output_keys_hint": _output_hint(assessment_type),
+    }
+    if assessment_type == LlmAssessmentType.POOL_SEMANTIC.value:
+        user_payload["allowed_enums"] = {
+            "search_intent": sorted(ALLOWED_SEARCH_INTENTS),
+            "business_relevance": sorted(ALLOWED_BUSINESS_RELEVANCE),
+            "actionability": sorted(ALLOWED_ACTIONABILITY),
+            "confidence": ["high", "medium", "low"],
+        }
+    try:
+        completion = llm.complete(
+            system=SYSTEM_PROMPTS[assessment_type],
+            user=canonical_json(user_payload),
+        )
+    except Exception as exc:  # noqa: BLE001 — leave item blocked, continue others
+        return {
+            "subject_id": subject_id,
+            "status": LlmReviewStage.AWAITING_LLM_ASSESSMENT.value,
+            "error": str(exc),
+        }
+
+    cost = Decimal(str(completion.get("cost_usd") or "0"))
+    try:
+        ledger.add(cost, source=f"llm:{assessment_type}")
+    except CostLimitExceeded as exc:
+        return {
+            "subject_id": subject_id,
+            "status": LlmReviewStage.AWAITING_LLM_ASSESSMENT.value,
+            "error": str(exc),
+            "stop": True,
+        }
+
+    ok, errors, normalized = validate_assessment_output(
+        assessment_type,
+        completion.get("output") or {},
+        allowed_target_pages=packet.get("allowlisted_target_pages") or [],
+        allowed_evidence_refs=packet.get("evidence_refs") or [],
+    )
+    assessment_id = str(uuid.uuid4())
+    validation_status = (
+        LlmValidationStatus.VALID.value if ok else LlmValidationStatus.INVALID.value
+    )
+    store.insert_llm_assessment(
+        {
+            "assessment_id": assessment_id,
+            "assessment_type": assessment_type,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "build_id": build_id,
+            "prompt_version": prompt_version,
+            "provider": completion.get("provider") or llm.provider,
+            "model": completion.get("model") or llm.model,
+            "input_fingerprint": fingerprint,
+            "input_evidence_refs_json": packet.get("evidence_refs") or [],
+            "redacted_input_json": packet,
+            "output_json": normalized if ok else (completion.get("output") or {}),
+            "validation_status": validation_status,
+            "validation_errors_json": errors,
+            "cost_usd": float(cost),
+            "latency_ms": completion.get("latency_ms"),
+            "created_at": utc_now_iso(),
+        }
+    )
+    if ok:
+        stage = LlmReviewStage.ASSESSMENT_VALIDATED.value
+        _apply_validated_side_effects(
+            store,
+            assessment_type=assessment_type,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            normalized=normalized,
+            assessment_id=assessment_id,
+        )
+    else:
+        stage = LlmReviewStage.LLM_OUTPUT_INVALID.value
+        if (
+            assessment_type == LlmAssessmentType.POOL_SEMANTIC.value
+            and subject_type == "keyword_candidate"
+        ):
+            from ..catalogue.apply_semantics import mark_awaiting_or_invalid
+
+            mark_awaiting_or_invalid(
+                store,
+                candidate_id=subject_id,
+                authority=SemanticAuthority.LLM_INVALID.value,
+                assessment_id=assessment_id,
+            )
+    _set_review_stage(
+        store,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        stage=stage,
+        assessment_id=assessment_id,
+    )
+    return {
+        "subject_id": subject_id,
+        "assessment_id": assessment_id,
+        "status": stage,
+        "validation_status": validation_status,
+        "validation_errors": errors,
     }
 
 
@@ -620,7 +750,7 @@ def _output_hint(assessment_type: str) -> Sequence[str]:
             "risk_flags",
         ]
     if assessment_type == LlmAssessmentType.QUESTION_REWRITE.value:
-        return ["rewritten_question", "naturalness", "rationale", "risk_flags"]
+        return ["phrasings", "naturalness", "rationale", "risk_flags"]
     if assessment_type == LlmAssessmentType.ANSWER_RUBRIC.value:
         return ["expected_answer_elements", "ymyl_notes", "risk_flags"]
     return [
@@ -649,7 +779,9 @@ def _set_review_stage(
         if assessment_id:
             fields["llm_assessment_id"] = assessment_id
         if stage == LlmReviewStage.AWAITING_LLM_ASSESSMENT.value:
-            fields["semantic_authority"] = SemanticAuthority.AWAITING_LLM.value
+            # Do not overwrite semantic_authority here — parallel workers can race
+            # a later validated write if we stamp awaiting_llm onto the same row.
+            pass
         store.update_keyword_candidate(subject_id, fields)
     elif subject_type == "question_candidate":
         fields = {"review_stage": stage, "updated_at": now}
@@ -675,9 +807,27 @@ def _apply_validated_side_effects(
             "updated_at": now,
         }
         if assessment_type == LlmAssessmentType.QUESTION_REWRITE.value:
+            # Store LLM drafts for human pick — do not auto-overwrite production wording.
+            phrasings = list(normalized.get("phrasings") or [])
             rewritten = normalized.get("rewritten_question")
-            if rewritten:
-                fields["question"] = rewritten
+            if isinstance(rewritten, str) and rewritten.strip() and rewritten.strip() not in phrasings:
+                phrasings = [rewritten.strip(), *phrasings]
+            phrasings = [p.strip() for p in phrasings if isinstance(p, str) and p.strip()][:2]
+            rows = store.fetchall(
+                "SELECT question, pilot_results_json FROM ai_question_candidates WHERE question_candidate_id = ?",
+                (subject_id,),
+            )
+            row0 = dict(rows[0]) if rows else {}
+            existing = _load_json(row0.get("pilot_results_json"), {}) if row0 else {}
+            if not isinstance(existing, dict):
+                existing = {}
+            if "template_question" not in existing and row0:
+                existing["template_question"] = row0.get("question")
+            existing["llm_phrasings"] = phrasings
+            existing["llm_phrasing_rationale"] = normalized.get("rationale") or ""
+            existing["llm_phrasing_risk_flags"] = normalized.get("risk_flags") or []
+            fields["pilot_results_json"] = existing
+            fields["transformation_method"] = "llm_assisted_draft"
             natural = normalized.get("naturalness")
             if natural in {"passed", "failed", "pending"}:
                 fields["naturalness_status"] = natural

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 SEMANTIC_REVIEW_PROMPT_VERSION = "semantic_review_v1"
 POOL_SEMANTIC_PROMPT_VERSION = "pool_semantic_v2"
-QUESTION_REWRITE_PROMPT_VERSION = "question_rewrite_v1"
+QUESTION_REWRITE_PROMPT_VERSION = "question_rewrite_v2"
 ANSWER_RUBRIC_PROMPT_VERSION = "answer_rubric_v1"
 OPPORTUNITY_DIAGNOSIS_PROMPT_VERSION = "opportunity_diagnosis_v1"
 
@@ -291,11 +291,21 @@ def validate_assessment_output(
         normalized["risk_flags"] = _as_str_list(output.get("risk_flags"), "risk_flags", errors)
 
     elif assessment_type == "question_rewrite":
+        phrasings_raw = output.get("phrasings")
         rewritten = output.get("rewritten_question")
-        if not isinstance(rewritten, str) or not rewritten.strip():
-            errors.append("rewritten_question must be a non-empty string")
-        else:
+        phrasings: List[str] = []
+        if isinstance(phrasings_raw, list):
+            phrasings = [p.strip() for p in phrasings_raw if isinstance(p, str) and p.strip()]
+        if isinstance(rewritten, str) and rewritten.strip():
+            if rewritten.strip() not in phrasings:
+                phrasings = [rewritten.strip(), *phrasings]
             normalized["rewritten_question"] = rewritten.strip()
+        if not phrasings or len(phrasings) > 2:
+            errors.append("phrasings must be an array of 1–2 non-empty strings")
+        else:
+            normalized["phrasings"] = phrasings[:2]
+            if "rewritten_question" not in normalized:
+                normalized["rewritten_question"] = phrasings[0]
         natural = output.get("naturalness", "pending")
         if natural not in {"passed", "failed", "pending"}:
             errors.append("naturalness must be passed|failed|pending")

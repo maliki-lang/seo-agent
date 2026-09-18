@@ -344,6 +344,7 @@ class QuestionSourceType(str, Enum):
     BUSINESS_NOMINATED = "business_nominated"
     SYNTHETIC_TEMPLATE = "synthetic_template"
     LLM_REWRITE = "llm_rewrite"
+    LLM_ASSISTED = "llm_assisted"
     SYNTHETIC_DRAFT = "synthetic_draft"
     SOURCE_BLOCKED = "source_blocked"
 

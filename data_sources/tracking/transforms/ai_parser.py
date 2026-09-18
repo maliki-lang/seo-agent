@@ -19,6 +19,31 @@ _BARE_DOMAIN_RE = re.compile(
     r"\b(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:/[^\s]*)?",
     re.IGNORECASE,
 )
+# Bare short names like "On" match English particles ("slip on", "influencers on").
+_AMBIGUOUS_COMPETITOR_NAMES = {"on", "yes", "and", "or", "the", "a", "an", "in", "at", "to"}
+# Phrasal-verb prefixes that make "on shoes" / "on cloud" false positives.
+_ON_NEGATIVE_PREFIXES = {
+    "slip",
+    "slips",
+    "slipper",
+    "slippers",
+    "slide",
+    "slides",
+    "put",
+    "puts",
+    "step",
+    "steps",
+    "try",
+    "trying",
+    "lace",
+    "lacing",
+    "keep",
+    "have",
+    "get",
+    "getting",
+    "influencers",
+    "influencer",
+}
 
 
 def _normalize_text(value: str) -> str:
@@ -78,19 +103,44 @@ def load_competitor_aliases(path: Path) -> List[Dict[str, Any]]:
     return rows
 
 
+def _alias_has_clean_match(padded: str, alias_n: str) -> bool:
+    """True when alias appears and is not a phrasal-verb false positive for On-style brands."""
+    needle = f" {alias_n} "
+    if needle not in padded:
+        return False
+    tokens = alias_n.split()
+    if not tokens or (tokens[0] != "on" and alias_n != "on"):
+        return True
+    start = 0
+    while True:
+        pos = padded.find(needle, start)
+        if pos < 0:
+            return False
+        before = padded[:pos].rstrip().split()
+        if before and before[-1] in _ON_NEGATIVE_PREFIXES:
+            start = pos + 1
+            continue
+        return True
+
+
 def named_competitors(text: str, catalogue: Sequence[Dict[str, Any]]) -> List[str]:
     normalized = f" {_normalize_text(text)} "
     spaced = normalized.replace(".", " ").replace("/", " ")
     found: List[str] = []
     for row in catalogue:
         name = str(row.get("name") or "").strip()
-        aliases = [name] + list(row.get("aliases") or [])
+        name_n = _normalize_text(name)
+        configured = [str(a).strip() for a in (row.get("aliases") or []) if str(a).strip()]
+        # Never use bare ambiguous short names as aliases — only configured phrases.
+        aliases = list(configured)
+        if name_n and name_n not in _AMBIGUOUS_COMPETITOR_NAMES and len(name_n) > 2:
+            aliases = [name] + aliases
         matched = False
         for alias in aliases:
             alias_n = _normalize_text(alias)
-            if not alias_n:
+            if not alias_n or alias_n in _AMBIGUOUS_COMPETITOR_NAMES:
                 continue
-            if f" {alias_n} " in normalized or f" {alias_n} " in spaced:
+            if _alias_has_clean_match(normalized, alias_n) or _alias_has_clean_match(spaced, alias_n):
                 matched = True
                 break
         if matched and name and name not in found:
